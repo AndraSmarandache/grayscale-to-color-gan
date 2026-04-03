@@ -1,0 +1,142 @@
+% references.bib — Bibliography for the Bachelor's Thesis
+% "Grayscale Image Colorization using Generative Adversarial Networks"
+%
+% Usage: compiled with biber (set in thesis via \usepackage[backend=biber, style=ieee]{biblatex})
+% Build order: pdflatex → biber → pdflatex → pdflatex
+%              (latexmk handles this automatically)
+
+
+% ---- Foundational GAN paper ----
+
+@inproceedings{goodfellow2014generative,
+    author    = {Goodfellow, Ian and Pouget-Abadie, Jean and Mirza, Mehdi and Xu, Bing and
+                 Warde-Farley, David and Ozair, Sherjil and Courville, Aaron and Bengio, Yoshua},
+    title     = {Generative Adversarial Nets},
+    booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+    volume    = {27},
+    year      = {2014},
+    publisher = {Curran Associates, Inc.}
+}
+
+
+% ---- Core colorization papers ----
+
+@inproceedings{zhang2016colorful,
+    author    = {Zhang, Richard and Isola, Phillip and Efros, Alexei A.},
+    title     = {Colorful Image Colorization},
+    booktitle = {European Conference on Computer Vision (ECCV)},
+    pages     = {649--666},
+    year      = {2016},
+    publisher = {Springer}
+}
+
+@inproceedings{larsson2016learning,
+    author    = {Larsson, Gustav and Maire, Michael and Shakhnarovich, Gregory},
+    title     = {Learning Representations for Automatic Colorization},
+    booktitle = {European Conference on Computer Vision (ECCV)},
+    pages     = {577--593},
+    year      = {2016},
+    publisher = {Springer}
+}
+
+@inproceedings{iizuka2016let,
+    author    = {Iizuka, Satoshi and Simo-Serra, Edgar and Ishikawa, Hiroshi},
+    title     = {Let There Be Color!: Joint End-to-End Learning of Global and Local Image Priors
+                 for Automatic Image Colorization with Simultaneous Classification},
+    booktitle = {ACM Transactions on Graphics (SIGGRAPH)},
+    volume    = {35},
+    number    = {4},
+    pages     = {110:1--110:11},
+    year      = {2016},
+    publisher = {ACM}
+}
+
+
+% ---- Conditional GANs / pix2pix (PatchGAN discriminator) ----
+
+@inproceedings{isola2017image,
+    author    = {Isola, Phillip and Zhu, Jun-Yan and Zhou, Tinghui and Efros, Alexei A.},
+    title     = {Image-to-Image Translation with Conditional Adversarial Networks},
+    booktitle = {IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+    pages     = {1125--1134},
+    year      = {2017}
+}
+
+
+% ---- Perceptual loss ----
+
+@inproceedings{johnson2016perceptual,
+    author    = {Johnson, Justin and Alahi, Alexandre and Fei-Fei, Li},
+    title     = {Perceptual Losses for Real-Time Style Transfer and Super-Resolution},
+    booktitle = {European Conference on Computer Vision (ECCV)},
+    pages     = {694--711},
+    year      = {2016},
+    publisher = {Springer}
+}
+
+
+% ---- ResNet (backbone for generator) ----
+
+@inproceedings{he2016deep,
+    author    = {He, Kaiming and Zhang, Xiangyu and Ren, Shaoqing and Sun, Jian},
+    title     = {Deep Residual Learning for Image Recognition},
+    booktitle = {IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+    pages     = {770--778},
+    year      = {2016}
+}
+
+
+% ---- COCO dataset ----
+
+@inproceedings{lin2014microsoft,
+    author    = {Lin, Tsung-Yi and Maire, Michael and Belongie, Serge and Hays, James and
+                 Perona, Pietro and Ramanan, Deva and Doll{\'a}r, Piotr and Zitnick, C. Lawrence},
+    title     = {Microsoft {COCO}: Common Objects in Context},
+    booktitle = {European Conference on Computer Vision (ECCV)},
+    pages     = {740--755},
+    year      = {2014},
+    publisher = {Springer}
+}
+
+
+% ---- Adversarial attacks (FGSM / PGD) ----
+
+@article{goodfellow2014explaining,
+    author  = {Goodfellow, Ian J. and Shlens, Jonathon and Szegedy, Christian},
+    title   = {Explaining and Harnessing Adversarial Examples},
+    journal = {arXiv preprint arXiv:1412.6572},
+    year    = {2014}
+}
+
+@inproceedings{madry2018towards,
+    author    = {Madry, Aleksander and Makelov, Aleksandar and Schmidt, Ludwig and
+                 Tsipras, Dimitris and Vladu, Adrian},
+    title     = {Towards Deep Learning Models Resistant to Adversarial Attacks},
+    booktitle = {International Conference on Learning Representations (ICLR)},
+    year      = {2018}
+}
+
+
+% ---- U-Net (skip connections architecture) ----
+
+@inproceedings{ronneberger2015u,
+    author    = {Ronneberger, Olaf and Fischer, Philipp and Brox, Thomas},
+    title     = {U-Net: Convolutional Networks for Biomedical Image Segmentation},
+    booktitle = {Medical Image Computing and Computer-Assisted Intervention (MICCAI)},
+    pages     = {234--241},
+    year      = {2015},
+    publisher = {Springer}
+}
+
+
+% ---- FID metric ----
+
+@inproceedings{heusel2017gans,
+    author    = {Heusel, Martin and Ramsauer, Hubert and Unterthiner, Thomas and
+                 Nessler, Bernhard and Hochreiter, Sepp},
+    title     = {GANs Trained by a Two Time-Scale Update Rule Converge to a Local Nash Equilibrium},
+    booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+    volume    = {30},
+    year      = {2017},
+    publisher = {Curran Associates, Inc.}
+}

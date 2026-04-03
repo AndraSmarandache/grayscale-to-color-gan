@@ -1,0 +1,272 @@
+% ============================================================
+%  Grayscale Image Colorization with GANs — Bachelor's Thesis
+% ============================================================
+\documentclass[12pt, a4paper, oneside]{report}
+
+% ---- Encoding & language ----
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+
+% ---- Page layout ----
+\usepackage[
+    top=2.5cm, bottom=2.5cm,
+    left=3cm,  right=2.5cm
+]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+
+% ---- Math ----
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% ---- Figures & tables ----
+\usepackage{graphicx}
+\usepackage{subcaption}   % side-by-side figures (grayscale | colorized | ground truth)
+\usepackage{booktabs}     % clean tables for ablation results
+\usepackage{float}
+
+% ---- Code listings ----
+\usepackage{listings}
+\usepackage{xcolor}
+
+% ---- References ----
+\usepackage[backend=biber, style=ieee]{biblatex}
+\addbibresource{references.bib}
+
+% ---- Hyperlinks (keep last) ----
+\usepackage[hidelinks]{hyperref}
+
+
+% ============================================================
+\begin{document}
+% ============================================================
+
+
+% ---- Title page ----
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+
+    {\Large \textbf{Craiova University}}\\[0.5cm]
+    {\large Faculty of Automation, Computers and Electronics}\\[3cm]
+
+    {\Huge \textbf{Grayscale Image Colorization\\using Generative Adversarial Networks}}\\[2cm]
+
+    {\large Bachelor's Thesis}\\[2cm]
+
+    \begin{minipage}{0.45\textwidth}
+        \begin{flushleft}
+            \textbf{Supervisor:}\\
+            Costin Badica
+        \end{flushleft}
+    \end{minipage}
+    \begin{minipage}{0.45\textwidth}
+        \begin{flushright}
+            \textbf{Author:}\\
+            Smarandache Andra-Maria
+        \end{flushright}
+    \end{minipage}
+
+    \vfill
+    {\large Craiova, 2026}
+\end{titlepage}
+
+
+% ---- Abstract ----
+\begin{abstract}
+% TODO: write last, after all results are in.
+% Must state: (1) the problem, (2) your approach, (3) your novel contributions,
+% (4) at least one quantitative result.
+%
+% Example structure:
+% Automatic colorization of grayscale images is a challenging ill-posed problem...
+% We propose a GAN-based system using a ResNet-18 U-Net generator and a PatchGAN
+% discriminator operating in the LAB color space. We introduce two novel loss
+% functions: Spatial Color Affinity Loss, which... and No Grey Loss, which...
+% Experiments on a 13,000-image COCO subset show that our combined loss model
+% achieves a PSNR of X dB and FID of Y, outperforming the baseline by Z%.
+\end{abstract}
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+
+% ============================================================
+\chapter{Introduction}
+% ============================================================
+
+% What is the problem and why does it matter?
+% What is your approach at a high level?
+% What are your specific contributions?
+% How is the thesis structured?
+
+\section{Motivation}
+\section{Problem Statement}
+\section{Contributions}
+
+% List your novel contributions explicitly — examiners look for this:
+% 1. Spatial Color Affinity Loss
+% 2. No Grey Loss
+% 3. Adversarial robustness evaluation via FGSM/PGD
+
+\section{Thesis Structure}
+
+
+% ============================================================
+\chapter{Related Work}
+% ============================================================
+
+% You must cite and discuss the foundational papers. Examiners check this.
+
+\section{Early Approaches to Image Colorization}
+% Discuss hand-crafted and scribble-based methods before deep learning.
+
+\section{Deep Learning for Colorization}
+% Zhang et al. (2016) — Colorful Image Colorization — the foundational paper.
+% Larsson et al. (2016) — Learning Representations for Automatic Colorization.
+% Iizuka et al. (2016) — Let there be Color.
+
+\section{Generative Adversarial Networks}
+% Goodfellow et al. (2014) — original GAN paper.
+% Isola et al. (2017) — pix2pix, conditional GANs for image-to-image translation.
+% The PatchGAN discriminator.
+
+\section{Loss Functions in Image Synthesis}
+% Perceptual loss (Johnson et al. 2016), Total Variation, L1 vs L2.
+% Position your novel losses in relation to existing work.
+
+
+% ============================================================
+\chapter{Methodology}
+% ============================================================
+
+\section{Color Space}
+% Why LAB instead of RGB.
+% L = lightness (input), ab = color (output to predict).
+% Normalization: L/50 - 1, ab/110.
+
+\section{Dataset Preparation}
+% Describe the COCO dataset and why we chose it.
+% The grayscale image problem — automated detection + manual pass.
+% The 16,000 subset strategy and why we needed that margin.
+% Final split: 13,000 images, 80/20 train/validation.
+
+\section{Model Architecture}
+
+    \subsection{Generator: ResNet-18 U-Net}
+    % Why ResNet-18 as backbone (pretrained on ImageNet).
+    % U-Net skip connections — preserving spatial detail.
+    % Input: 1 channel (L), output: 2 channels (ab).
+    % First conv layer adaptation for grayscale input.
+
+    \subsection{Discriminator: PatchGAN}
+    % Why patch-level discrimination instead of image-level.
+    % Encourages locally consistent texture and sharp edges.
+    % Architecture: strided convolutions, BCEWithLogitsLoss on logits.
+
+\section{Loss Functions}
+
+    \subsection{Baseline Losses}
+    % L1 loss (pixel fidelity, weight 100).
+    % GAN loss (adversarial realism).
+    % Total Variation loss (smoothness, artifact reduction).
+    % Contrast loss.
+
+    \subsection{Spatial Color Affinity Loss (Novel)}
+    % The core idea: pixels with similar luminance should have similar color.
+    % Mathematical formulation:
+    \begin{equation}
+        \mathcal{L}_{\text{affinity}} = \frac{1}{|\mathcal{N}|}
+        \sum_{(i,j) \in \mathcal{N}}
+        \mathbf{1}[|L_i - L_j| < \tau] \cdot \|ab_i - ab_j\|_1
+    \end{equation}
+    % where N is the set of adjacent pixel pairs and tau is the luminance threshold.
+
+    \subsection{No Grey Loss (Novel)}
+    % Penalizes the generator for leaving regions fully desaturated.
+    % Mathematical formulation: TODO
+
+\section{Training Procedure}
+% Stage 1: pretraining generator with L1 loss only.
+% Stage 2: full GAN adversarial training.
+% Optimizer: Adam, lr_G = lr_D = 2e-4, beta1=0.5, beta2=0.999.
+% Batch size, epochs, hardware (Tesla T4).
+
+
+% ============================================================
+\chapter{Experiments}
+% ============================================================
+
+\section{Experimental Setup}
+% Hardware, dataset, training configuration.
+
+\section{Evaluation Metrics}
+% PSNR, SSIM, FID — define each and explain why it is relevant for colorization.
+
+\section{Ablation Study}
+% This is the most important section for the grade.
+% A table comparing each loss combination:
+
+\begin{table}[H]
+    \centering
+    \caption{Ablation study: effect of each loss component.}
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Configuration} & \textbf{PSNR} $\uparrow$ & \textbf{SSIM} $\uparrow$ & \textbf{FID} $\downarrow$ \\
+        \midrule
+        Baseline (L1 + GAN)              & -- & -- & -- \\
+        + TV Loss                        & -- & -- & -- \\
+        + Contrast Loss                  & -- & -- & -- \\
+        + Spatial Affinity Loss          & -- & -- & -- \\
+        + No Grey Loss (full model)      & -- & -- & -- \\
+        \bottomrule
+    \end{tabular}
+    \label{tab:ablation}
+\end{table}
+
+\section{Adversarial Robustness}
+% FGSM and PGD experiments.
+% Compare standard vs adversarially trained model under perturbation.
+
+\section{Qualitative Results}
+% Show the triplet figures: grayscale input | ground truth | colorized output.
+% Pick representative examples: outdoor scenes, portraits, objects, etc.
+
+\begin{figure}[H]
+    \centering
+    % \includegraphics[width=\textwidth]{../results/sample_outputs/example.png}
+    \caption{Colorization results. Left: grayscale input. Center: ground truth. Right: model output.}
+    \label{fig:results}
+\end{figure}
+
+
+% ============================================================
+\chapter{Results and Discussion}
+% ============================================================
+
+\section{Quantitative Results}
+\section{Effect of Novel Loss Functions}
+\section{Limitations}
+% Near-grayscale images in dataset.
+% Dataset size (13k vs hundreds of thousands in SOTA).
+% No perceptual/VGG loss.
+
+\section{Future Work}
+
+
+% ============================================================
+\chapter{Conclusion}
+% ============================================================
+
+% Summarize: problem, approach, contributions, key results.
+% One paragraph, no new information.
+
+
+% ============================================================
+\printbibliography[heading=bibintoc, title={References}]
+% ============================================================
+
+
+\end{document}
