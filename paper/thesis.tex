@@ -143,28 +143,38 @@
 % ============================================================
 
 \section{Color Space}
-% Why LAB instead of RGB.
-% L = lightness (input), ab = color (output to predict).
-% Normalization: L/50 - 1, ab/110.
+
+Image colorization can be formulated in several color spaces. Working directly in RGB couples luminance and chrominance information, which complicates the learning task. We instead use the CIE L*a*b* (LAB) color space, which separates lightness $L^*$ from the two color-opponent channels $a^*$ (green–red axis) and $b^*$ (blue–yellow axis).
+
+This separation aligns naturally with the colorization problem: given a grayscale image (which corresponds directly to the $L^*$ channel), the model only needs to predict the $a^*$ and $b^*$ channels. The generator therefore receives a single-channel input ($L$) and produces a two-channel output ($ab$).
+
+Both channels are normalized before training. The $L$ channel (range $[0, 100]$) is mapped to $[-1, 1]$ via $L/50 - 1$. The $ab$ channels (range approximately $[-128, 127]$) are mapped to $[-1, 1]$ via division by $110$.
 
 \section{Dataset Preparation}
-% Describe the COCO dataset and why we chose it.
-% The grayscale image problem — automated detection + manual pass.
-% The 16,000 subset strategy and why we needed that margin.
-% Final split: 13,000 images, 80/20 train/validation.
+
+We use the Microsoft COCO dataset \cite{lin2014microsoft} as our training corpus, which provides a diverse collection of natural images across a wide range of scenes and objects.
+
+The raw COCO dataset contains a non-trivial fraction of grayscale images, which are unsuitable for colorization training as they provide no ground-truth color information. To address this, we applied an automated grayscale detection step: each image is converted to RGB and the three channels are compared pixel-wise; images where all channels are identical are removed. Because some images are \textit{near-grayscale} (heavily desaturated or filtered), automated detection alone is insufficient. A manual inspection pass was therefore performed on the resulting subset to remove any remaining problematic images.
+
+To guarantee a sufficient number of valid images after manual filtering, we extracted a subset of 16,000 images from the full dataset using a fixed random seed (42) for reproducibility. After the manual pass, approximately 13,000 color images remained. These were split into training and validation sets using an 80/20 ratio, yielding approximately 10,400 training images and 2,600 validation images.
 
 \section{Model Architecture}
 
     \subsection{Generator: ResNet-18 U-Net}
-    % Why ResNet-18 as backbone (pretrained on ImageNet).
-    % U-Net skip connections — preserving spatial detail.
-    % Input: 1 channel (L), output: 2 channels (ab).
-    % First conv layer adaptation for grayscale input.
+
+    The generator follows a U-Net architecture \cite{ronneberger2015u} with a ResNet-18 encoder backbone \cite{he2016deep}. U-Net skip connections pass encoder feature maps directly to the corresponding decoder layers, preserving fine-grained spatial detail that would otherwise be lost through the bottleneck. This is important for colorization, where local texture and edge information must be retained in the predicted color output.
+
+    ResNet-18 is used as the encoder because its residual connections enable effective gradient flow and because ImageNet-pretrained weights provide a strong initialization for feature extraction. Pretraining is critical given our relatively small dataset of 13,000 images: the encoder already recognizes shapes, textures, and objects relevant to color prediction without needing to learn these representations from scratch.
+
+    Since ResNet-18 expects a three-channel RGB input, but our model receives a single $L$ channel, the first convolutional layer is adapted: a new \texttt{Conv2d(1, 64)} layer is created and its weights are initialized by averaging the three input-channel weights of the original pretrained layer.
+
+    The decoder is built using \texttt{fastai}'s \texttt{DynamicUnet}, which automatically constructs the upsampling path with skip connections matched to the encoder. The final output is a two-channel $ab$ prediction in the range $[-1, 1]$ (Tanh activation).
 
     \subsection{Discriminator: PatchGAN}
-    % Why patch-level discrimination instead of image-level.
-    % Encourages locally consistent texture and sharp edges.
-    % Architecture: strided convolutions, BCEWithLogitsLoss on logits.
+
+    The discriminator is a PatchGAN \cite{isola2017image}, which classifies overlapping image patches as real or fake rather than producing a single scalar judgment for the entire image. This encourages the generator to produce locally consistent texture and sharp edges, since the discriminator penalizes unrealistic color at the patch level.
+
+    The architecture consists of a sequence of strided convolutions that progressively increase the number of channels (64 → 128 → 256 → 512) while reducing spatial resolution. The final layer produces a one-channel logit map without activation, and training uses \texttt{BCEWithLogitsLoss} on these raw logits. The conditional discriminator receives the concatenation of the $L$ channel and the $ab$ channels (real or generated) as a three-channel input, making it aware of the input luminance when judging color realism.
 
 \section{Loss Functions}
 
