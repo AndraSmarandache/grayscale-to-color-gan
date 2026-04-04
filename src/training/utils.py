@@ -56,14 +56,16 @@ class AverageMeter:
 def create_loss_meters():
     """Create one AverageMeter per tracked loss term."""
     return {
-        'loss_D_fake':    AverageMeter(),
-        'loss_D_real':    AverageMeter(),
-        'loss_D':         AverageMeter(),
-        'loss_G_GAN':     AverageMeter(),
-        'loss_G_L1':      AverageMeter(),
-        'loss_G_TV':      AverageMeter(),
-        'loss_G_contrast': AverageMeter(),
-        'loss_G':         AverageMeter(),
+        'loss_D_fake':      AverageMeter(),
+        'loss_D_real':      AverageMeter(),
+        'loss_D':           AverageMeter(),
+        'loss_G_GAN':       AverageMeter(),
+        'loss_G_L1':        AverageMeter(),
+        'loss_G_TV':        AverageMeter(),
+        'loss_G_contrast':  AverageMeter(),
+        'loss_G_affinity':  AverageMeter(),
+        'loss_G_nogrey':    AverageMeter(),
+        'loss_G':           AverageMeter(),
     }
 
 
