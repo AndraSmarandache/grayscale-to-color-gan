@@ -179,30 +179,41 @@ To guarantee a sufficient number of valid images after manual filtering, we extr
 \section{Loss Functions}
 
     \subsection{Baseline Losses}
-    % L1 loss (pixel fidelity, weight 100).
-    % GAN loss (adversarial realism).
-    % Total Variation loss (smoothness, artifact reduction).
-    % Contrast loss.
+
+    The generator is trained with a combination of four baseline losses.
+
+    \textbf{L1 Loss.} A pixel-wise L1 distance between the predicted $ab$ channels and the ground truth, weighted by $\lambda_{L1} = 100$. This provides the primary supervision signal and encourages overall color accuracy.
+
+    \textbf{GAN Loss.} The standard adversarial loss \cite{goodfellow2014generative} using the PatchGAN discriminator with \texttt{BCEWithLogitsLoss}. The generator is trained to fool the discriminator, which encourages it to produce perceptually realistic colors rather than just minimizing pixel error.
+
+    \textbf{Total Variation Loss.} Penalizes large color differences between horizontally and vertically adjacent pixels, computed over the predicted $ab$ channels. This reduces color artifacts and smooths transitions in uniform regions such as sky, snow, or plain surfaces.
+
+    \textbf{Contrast Loss.} Encourages the generator to match the contrast level of the ground truth image. Contrast is measured as the standard deviation of the $L$ channel. This helps in scenes with extreme lighting conditions, such as night scenes or strongly lit outdoor images.
 
     \subsection{Spatial Color Affinity Loss (Novel)}
-    % The core idea: pixels with similar luminance should have similar color.
-    % Mathematical formulation:
+
+    We introduce the Spatial Color Affinity Loss, which enforces local color consistency based on luminance similarity. The intuition is that adjacent pixels with similar luminance should also receive similar colors — for example, pixels in a uniformly lit sky region should not produce isolated color patches.
+
+    For each pair of horizontally or vertically adjacent pixels $(i, j)$, we compute the luminance difference $|L_i - L_j|$. If this difference is below a threshold $\tau$, the pair is considered luminance-similar and contributes to the loss. The loss penalizes the mismatch between the color smoothness of the prediction and the color smoothness of the ground truth for those pairs:
+
     \begin{equation}
         \mathcal{L}_{\text{affinity}} = \frac{1}{|\mathcal{N}|}
         \sum_{(i,j) \in \mathcal{N}}
-        \mathbf{1}[|L_i - L_j| < \tau] \cdot \|ab_i - ab_j\|_1
+        \mathbf{1}[|L_i - L_j| < \tau] \cdot
+        \bigl| \|ab^{\text{pred}}_i - ab^{\text{pred}}_j\|_1 - \|ab^{\text{gt}}_i - ab^{\text{gt}}_j\|_1 \bigr|
     \end{equation}
-    % where N is the set of adjacent pixel pairs and tau is the luminance threshold.
+
+    where $\mathcal{N}$ is the set of all adjacent pixel pairs (horizontal and vertical), and $\tau = 0.1$ in normalized $L$ space. The loss is computed separately for horizontal and vertical directions and summed.
 
     \subsection{No Grey Loss (Novel)}
-    % Penalizes the generator for leaving regions fully desaturated.
-    % Mathematical formulation: TODO
+    % TODO: add formulation once finalized.
+    % Penalizes the generator for predicting near-zero ab values (desaturated output).
 
 \section{Training Procedure}
-% Stage 1: pretraining generator with L1 loss only.
-% Stage 2: full GAN adversarial training.
-% Optimizer: Adam, lr_G = lr_D = 2e-4, beta1=0.5, beta2=0.999.
-% Batch size, epochs, hardware (Tesla T4).
+
+    Training proceeds in two stages. In the first stage, the generator is pretrained using only the L1 loss for 20 epochs with a learning rate of $10^{-4}$. This gives the generator a stable initialization before adversarial training begins, avoiding the instability that can occur when the discriminator overwhelms an untrained generator.
+
+    In the second stage, the full GAN is trained for 20 additional epochs. Both the generator and discriminator use the Adam optimizer with learning rate $2 \times 10^{-4}$, $\beta_1 = 0.5$, and $\beta_2 = 0.999$. The discriminator is updated first on each iteration, followed by the generator. All experiments use a batch size of 16 on an NVIDIA Tesla T4 GPU.
 
 
 % ============================================================
