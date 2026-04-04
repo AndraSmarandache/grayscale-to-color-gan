@@ -161,3 +161,31 @@ def build_generator(n_input=1, n_output=2, size=256):
     else:
         print("Using Classic U-Net (no pretrained weights)")
         return build_classic_unet(n_input, n_output, size)
+
+
+class UncertaintyGenerator(nn.Module):
+    """
+    Wraps a pretrained colorization generator and adds a lightweight
+    uncertainty head that predicts per-pixel log-variance for each ab channel.
+
+    The base generator weights can be loaded from a pretrained checkpoint and
+    fine-tuned normally. The uncertainty head is a single 1×1 conv initialized
+    to predict low variance, so early training is stable.
+
+    Forward returns:
+        ab_mean  : [B, 2, H, W]  — color prediction (tanh, normalized)
+        log_var  : [B, 2, H, W]  — log-variance per channel (unconstrained)
+    """
+    def __init__(self, base_generator):
+        super().__init__()
+        self.base = base_generator
+        # 1x1 conv: maps ab mean → log variance
+        # bias initialized to -2 so initial variance ≈ e^-2 ≈ 0.14 (low, stable start)
+        self.logvar_head = nn.Conv2d(2, 2, kernel_size=1)
+        nn.init.zeros_(self.logvar_head.weight)
+        nn.init.constant_(self.logvar_head.bias, -2.0)
+
+    def forward(self, L):
+        ab_mean = self.base(L)
+        log_var = self.logvar_head(ab_mean)
+        return ab_mean, log_var
