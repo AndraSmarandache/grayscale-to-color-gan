@@ -22,8 +22,8 @@
 
 % ---- Figures & tables ----
 \usepackage{graphicx}
-\usepackage{subcaption}   % side-by-side figures (grayscale | colorized | ground truth)
-\usepackage{booktabs}     % clean tables for ablation results
+\usepackage{subcaption}
+\usepackage{booktabs}
 \usepackage{float}
 
 % ---- Code listings ----
@@ -76,16 +76,14 @@
 % ---- Abstract ----
 \begin{abstract}
 % TODO: write last, after all results are in.
-% Must state: (1) the problem, (2) your approach, (3) your novel contributions,
-% (4) at least one quantitative result.
+% Structure: (1) problem, (2) approach, (3) novel contributions, (4) key result.
 %
-% Example structure:
 % Automatic colorization of grayscale images is a challenging ill-posed problem...
 % We propose a GAN-based system using a ResNet-18 U-Net generator and a PatchGAN
 % discriminator operating in the LAB color space. We introduce two novel loss
-% functions: Spatial Color Affinity Loss, which... and No Grey Loss, which...
+% functions: Spatial Color Affinity Loss and No Grey Loss.
 % Experiments on a 13,000-image COCO subset show that our combined loss model
-% achieves a PSNR of X dB and FID of Y, outperforming the baseline by Z%.
+% achieves a PSNR of X dB and FID of Y, outperforming the baseline by Z\%.
 \end{abstract}
 
 \tableofcontents
@@ -97,84 +95,249 @@
 \chapter{Introduction}
 % ============================================================
 
-% What is the problem and why does it matter?
-% What is your approach at a high level?
-% What are your specific contributions?
-% How is the thesis structured?
-
 \section{Motivation}
+
+Colorization of grayscale images has applications across several domains: restoring
+historical photographs, improving the interpretability of medical scans, and
+post-processing footage captured in low-light conditions where color information
+is unavailable or unreliable. Doing this manually is time-consuming and requires
+expert knowledge about the original scene. Automated colorization removes this
+bottleneck and makes it feasible to process large archives at scale.
+
+The problem is fundamentally ill-posed: a single grayscale image is consistent with
+many possible color assignments. A gray stone and a gray sky have the same luminance,
+but they demand entirely different colors. Any successful approach must therefore go
+beyond pixel-level reasoning and understand the semantic content of the image.
+
 \section{Problem Statement}
+
+Given a grayscale image represented by its luminance channel $L \in \mathbb{R}^{H \times W}$,
+the goal is to predict the two chrominance channels $a, b \in \mathbb{R}^{H \times W}$
+that, when combined with $L$ in the CIE L*a*b* color space, produce a perceptually
+plausible color image. The mapping $f: L \mapsto (a, b)$ is one-to-many, meaning
+there is no unique correct output. The evaluation must therefore measure both
+pixel-level accuracy and perceptual realism.
+
 \section{Contributions}
 
-% List your novel contributions explicitly — examiners look for this:
-% 1. Spatial Color Affinity Loss
-% 2. No Grey Loss
-% 3. Adversarial robustness evaluation via FGSM/PGD
+This thesis makes the following contributions:
+
+\begin{enumerate}
+    \item A full GAN-based colorization system built around a ResNet-18 U-Net
+          generator and a PatchGAN discriminator, trained on a 13,000-image
+          COCO subset in the LAB color space.
+
+    \item \textbf{Spatial Color Affinity Loss}: a novel loss that enforces local
+          color consistency by penalizing color discontinuities between adjacent
+          pixels that have similar luminance.
+
+    \item \textbf{No Grey Loss}: a novel loss that discourages the generator from
+          predicting desaturated (near-grey) output by penalizing low $ab$ magnitude.
+
+    \item An ablation study quantifying the individual and combined effect of each
+          loss component on PSNR, SSIM, and FID.
+
+    \item An adversarial robustness evaluation: the model is tested under FGSM and
+          PGD perturbations applied to the input $L$ channel, and a version trained
+          with adversarial examples is compared against the baseline.
+\end{enumerate}
 
 \section{Thesis Structure}
+
+Chapter~\ref{ch:related} reviews prior work on image colorization and the
+generative models that underpin this thesis. Chapter~\ref{ch:methodology} describes
+the color space formulation, dataset, model architecture, and loss functions in
+detail. Chapter~\ref{ch:experiments} presents the experimental setup and results.
+Chapter~\ref{ch:discussion} analyzes the results and discusses limitations.
+Chapter~\ref{ch:conclusion} concludes the thesis.
 
 
 % ============================================================
 \chapter{Related Work}
+\label{ch:related}
 % ============================================================
 
-% You must cite and discuss the foundational papers. Examiners check this.
-
 \section{Early Approaches to Image Colorization}
-% Discuss hand-crafted and scribble-based methods before deep learning.
+
+Before deep learning, colorization relied either on user guidance or on propagating
+color from reference images. Levin et al.\ \cite{levin2004colorization} introduced
+a scribble-based approach in which the user marks a few regions with approximate
+colors; the system then propagates these colors globally under the assumption that
+spatially adjacent pixels with similar luminance should share similar colors. While
+effective for simple images, this method requires manual interaction and does not
+scale to large image collections.
+
+Reference-based approaches \cite{welsh2002transferring} automatically transfer color
+from a user-provided example image by matching grayscale luminance and local texture
+descriptors. These methods produce plausible results when a good reference is
+available, but they are sensitive to the choice of reference and often introduce
+artifacts when the reference does not closely match the target.
+
+Both families of methods share a fundamental limitation: they do not reason about
+the semantic content of the image. A deep blue sky and a gray concrete surface can
+have identical local texture descriptors yet require very different colors.
 
 \section{Deep Learning for Colorization}
-% Zhang et al. (2016) — Colorful Image Colorization — the foundational paper.
-% Larsson et al. (2016) — Learning Representations for Automatic Colorization.
-% Iizuka et al. (2016) — Let there be Color.
+
+The first large-scale fully automatic colorization system based on deep learning was
+proposed by Zhang et al.\ \cite{zhang2016colorful}. They framed colorization as a
+classification problem over a quantized $ab$ color space and trained a convolutional
+network with a rebalanced cross-entropy loss that up-weighted rare colors to prevent
+the model from defaulting to desaturated output. The resulting system produces
+vibrant, plausible colorizations and was the first to demonstrate that a network can
+learn to associate semantic regions (sky, grass, skin) with appropriate colors without
+any user input.
+
+Larsson et al.\ \cite{larsson2016learning} showed that features learned for
+image-level semantic classification transfer directly to colorization. They attached
+a colorization head to a VGG network pretrained on ImageNet, demonstrating that
+object-level representations are sufficient to drive color prediction without
+task-specific supervision.
+
+Iizuka et al.\ \cite{iizuka2016let} introduced a network that fuses global image
+features (obtained from a classification branch) with local features from a
+convolutional encoder. This fusion addresses a key weakness of purely local models:
+global context is needed to correctly color, for example, a sky that appears in only
+part of the image.
 
 \section{Generative Adversarial Networks}
-% Goodfellow et al. (2014) — original GAN paper.
-% Isola et al. (2017) — pix2pix, conditional GANs for image-to-image translation.
-% The PatchGAN discriminator.
+
+Generative Adversarial Networks (GANs) \cite{goodfellow2014generative} consist of
+two networks trained in competition: a generator $G$ that produces synthetic samples
+and a discriminator $D$ that tries to distinguish them from real ones. The two
+networks are trained with the minimax objective:
+
+\begin{equation}
+    \min_G \max_D \; \mathbb{E}_{x \sim p_{\text{data}}}[\log D(x)]
+    + \mathbb{E}_{z \sim p_z}[\log(1 - D(G(z)))]
+\end{equation}
+
+In this formulation the generator must produce samples indistinguishable from real
+data, which drives it toward perceptually realistic output — something that pure
+regression losses like L1 cannot achieve.
+
+For image-to-image translation tasks, Isola et al.\ \cite{isola2017image} introduced
+the conditional GAN framework (pix2pix), in which both $G$ and $D$ are conditioned
+on an input image. The generator receives the source image and produces the target;
+the discriminator receives the source-target pair and must judge whether the target
+is real or synthesized. The pix2pix discriminator uses a PatchGAN architecture that
+classifies overlapping $N \times N$ patches of the image rather than the whole image,
+which encourages the generator to produce locally consistent texture and sharp edges.
 
 \section{Loss Functions in Image Synthesis}
-% Perceptual loss (Johnson et al. 2016), Total Variation, L1 vs L2.
-% Position your novel losses in relation to existing work.
+
+The choice of loss function has a large effect on the quality and style of the
+generated output. Regression losses (L1, L2) are simple and stable but produce
+blurry predictions because they average over the space of plausible outputs. The
+adversarial loss mitigates this by pushing the generator toward the manifold of
+realistic images, but it can also introduce instability and mode collapse.
+
+Johnson et al.\ \cite{johnson2016perceptual} introduced perceptual losses based
+on feature activations from a pretrained VGG network. By comparing deep features
+rather than raw pixels, perceptual losses capture style and semantic similarity
+more effectively than L1. They have since become standard in image synthesis tasks.
+
+Total Variation (TV) regularization penalizes spatial variation in the output,
+producing smoother images and suppressing high-frequency artifacts. It is a classical
+signal processing technique that has been adapted for deep image synthesis.
+
+The loss functions in this thesis build on this foundation. The baseline uses
+L1 + adversarial + TV + contrast. The two novel contributions (Spatial Color Affinity
+and No Grey Loss) address specific failure modes observed in the baseline: isolated
+color patches in uniform regions and desaturated output, respectively.
 
 
 % ============================================================
 \chapter{Methodology}
+\label{ch:methodology}
 % ============================================================
 
 \section{Color Space}
 
-Image colorization can be formulated in several color spaces. Working directly in RGB couples luminance and chrominance information, which complicates the learning task. We instead use the CIE L*a*b* (LAB) color space, which separates lightness $L^*$ from the two color-opponent channels $a^*$ (green–red axis) and $b^*$ (blue–yellow axis).
+Image colorization can be formulated in several color spaces. Working directly in RGB
+couples luminance and chrominance information, which complicates the learning task.
+We instead use the CIE L*a*b* (LAB) color space, which separates lightness $L^*$
+from the two color-opponent channels $a^*$ (green--red axis) and $b^*$ (blue--yellow
+axis).
 
-This separation aligns naturally with the colorization problem: given a grayscale image (which corresponds directly to the $L^*$ channel), the model only needs to predict the $a^*$ and $b^*$ channels. The generator therefore receives a single-channel input ($L$) and produces a two-channel output ($ab$).
+This separation aligns naturally with the colorization problem: given a grayscale
+image (which corresponds directly to the $L^*$ channel), the model only needs to
+predict the $a^*$ and $b^*$ channels. The generator therefore receives a
+single-channel input ($L$) and produces a two-channel output ($ab$).
 
-Both channels are normalized before training. The $L$ channel (range $[0, 100]$) is mapped to $[-1, 1]$ via $L/50 - 1$. The $ab$ channels (range approximately $[-128, 127]$) are mapped to $[-1, 1]$ via division by $110$.
+Both channels are normalized before training. The $L$ channel (range $[0, 100]$) is
+mapped to $[-1, 1]$ via $L/50 - 1$. The $ab$ channels (range approximately
+$[-128, 127]$) are mapped to $[-1, 1]$ via division by $110$.
 
 \section{Dataset Preparation}
 
-We use the Microsoft COCO dataset \cite{lin2014microsoft} as our training corpus, which provides a diverse collection of natural images across a wide range of scenes and objects.
+We use the Microsoft COCO dataset \cite{lin2014microsoft} as our training corpus,
+which provides a diverse collection of natural images across a wide range of scenes
+and objects.
 
-The raw COCO dataset contains a non-trivial fraction of grayscale images, which are unsuitable for colorization training as they provide no ground-truth color information. To address this, we applied an automated grayscale detection step: each image is converted to RGB and the three channels are compared pixel-wise; images where all channels are identical are removed. Because some images are \textit{near-grayscale} (heavily desaturated or filtered), automated detection alone is insufficient. A manual inspection pass was therefore performed on the resulting subset to remove any remaining problematic images.
+The raw COCO dataset contains a non-trivial fraction of grayscale images, which are
+unsuitable for colorization training as they provide no ground-truth color
+information. To address this, we applied an automated grayscale detection step: each
+image is converted to RGB and the three channels are compared pixel-wise; images
+where all channels are identical are removed. Because some images are
+\textit{near-grayscale} (heavily desaturated or filtered), automated detection alone
+is insufficient. A manual inspection pass was therefore performed on the resulting
+subset to remove any remaining problematic images.
 
-To guarantee a sufficient number of valid images after manual filtering, we extracted a subset of 16,000 images from the full dataset using a fixed random seed (42) for reproducibility. After the manual pass, approximately 13,000 color images remained. These were split into training and validation sets using an 80/20 ratio, yielding approximately 10,400 training images and 2,600 validation images.
+To guarantee a sufficient number of valid images after manual filtering, we extracted
+a subset of 16,000 images from the full dataset using a fixed random seed (42) for
+reproducibility. After the manual pass, approximately 13,000 color images remained.
+These were split into training and validation sets using an 80/20 ratio, yielding
+approximately 10,400 training images and 2,600 validation images.
 
 \section{Model Architecture}
 
     \subsection{Generator: ResNet-18 U-Net}
 
-    The generator follows a U-Net architecture \cite{ronneberger2015u} with a ResNet-18 encoder backbone \cite{he2016deep}. U-Net skip connections pass encoder feature maps directly to the corresponding decoder layers, preserving fine-grained spatial detail that would otherwise be lost through the bottleneck. This is important for colorization, where local texture and edge information must be retained in the predicted color output.
+    The generator follows a U-Net architecture \cite{ronneberger2015u} with a
+    ResNet-18 encoder backbone \cite{he2016deep}. U-Net skip connections pass
+    encoder feature maps directly to the corresponding decoder layers, preserving
+    fine-grained spatial detail that would otherwise be lost through the bottleneck.
+    This is important for colorization, where local texture and edge information
+    must be retained in the predicted color output.
 
-    ResNet-18 is used as the encoder because its residual connections enable effective gradient flow and because ImageNet-pretrained weights provide a strong initialization for feature extraction. Pretraining is critical given our relatively small dataset of 13,000 images: the encoder already recognizes shapes, textures, and objects relevant to color prediction without needing to learn these representations from scratch.
+    ResNet-18 is used as the encoder because its residual connections enable
+    effective gradient flow and because ImageNet-pretrained weights provide a strong
+    initialization for feature extraction. Pretraining is critical given our
+    relatively small dataset of 13,000 images: the encoder already recognizes shapes,
+    textures, and objects relevant to color prediction without needing to learn these
+    representations from scratch.
 
-    Since ResNet-18 expects a three-channel RGB input, but our model receives a single $L$ channel, the first convolutional layer is adapted: a new \texttt{Conv2d(1, 64)} layer is created and its weights are initialized by averaging the three input-channel weights of the original pretrained layer.
+    Residual connections in ResNet address the vanishing gradient problem that
+    limited very deep networks before their introduction. Each residual block
+    computes $\mathcal{F}(x) + x$, where $\mathcal{F}$ is the learned residual
+    mapping, so gradients can flow directly through the identity shortcut.
 
-    The decoder is built using \texttt{fastai}'s \texttt{DynamicUnet}, which automatically constructs the upsampling path with skip connections matched to the encoder. The final output is a two-channel $ab$ prediction in the range $[-1, 1]$ (Tanh activation).
+    Since ResNet-18 expects a three-channel RGB input, but our model receives a
+    single $L$ channel, the first convolutional layer is adapted: a new
+    \texttt{Conv2d(1, 64)} layer is created and its weights are initialized by
+    averaging the three input-channel weights of the original pretrained layer.
+
+    The decoder is built using \texttt{fastai}'s \texttt{DynamicUnet}, which
+    automatically constructs the upsampling path with skip connections matched to
+    the encoder. The final output is a two-channel $ab$ prediction in the range
+    $[-1, 1]$ (Tanh activation).
 
     \subsection{Discriminator: PatchGAN}
 
-    The discriminator is a PatchGAN \cite{isola2017image}, which classifies overlapping image patches as real or fake rather than producing a single scalar judgment for the entire image. This encourages the generator to produce locally consistent texture and sharp edges, since the discriminator penalizes unrealistic color at the patch level.
+    The discriminator is a PatchGAN \cite{isola2017image}, which classifies
+    overlapping image patches as real or fake rather than producing a single scalar
+    judgment for the entire image. This encourages the generator to produce locally
+    consistent texture and sharp edges, since the discriminator penalizes unrealistic
+    color at the patch level.
 
-    The architecture consists of a sequence of strided convolutions that progressively increase the number of channels (64 → 128 → 256 → 512) while reducing spatial resolution. The final layer produces a one-channel logit map without activation, and training uses \texttt{BCEWithLogitsLoss} on these raw logits. The conditional discriminator receives the concatenation of the $L$ channel and the $ab$ channels (real or generated) as a three-channel input, making it aware of the input luminance when judging color realism.
+    The architecture consists of a sequence of strided convolutions that progressively
+    increase the number of channels ($64 \to 128 \to 256 \to 512$) while reducing
+    spatial resolution. The final layer produces a one-channel logit map without
+    activation, and training uses \texttt{BCEWithLogitsLoss} on these raw logits.
+    The conditional discriminator receives the concatenation of the $L$ channel and
+    the $ab$ channels (real or generated) as a three-channel input, making it aware
+    of the input luminance when judging color realism.
 
 \section{Loss Functions}
 
@@ -182,63 +345,172 @@ To guarantee a sufficient number of valid images after manual filtering, we extr
 
     The generator is trained with a combination of four baseline losses.
 
-    \textbf{L1 Loss.} A pixel-wise L1 distance between the predicted $ab$ channels and the ground truth, weighted by $\lambda_{L1} = 100$. This provides the primary supervision signal and encourages overall color accuracy.
+    \textbf{L1 Loss.} A pixel-wise L1 distance between the predicted $ab$ channels
+    and the ground truth, weighted by $\lambda_{L1} = 100$. This provides the primary
+    supervision signal and encourages overall color accuracy.
 
-    \textbf{GAN Loss.} The standard adversarial loss \cite{goodfellow2014generative} using the PatchGAN discriminator with \texttt{BCEWithLogitsLoss}. The generator is trained to fool the discriminator, which encourages it to produce perceptually realistic colors rather than just minimizing pixel error.
+    \textbf{GAN Loss.} The standard adversarial loss \cite{goodfellow2014generative}
+    using the PatchGAN discriminator with \texttt{BCEWithLogitsLoss}. The generator
+    is trained to fool the discriminator, which encourages it to produce perceptually
+    realistic colors rather than just minimizing pixel error.
 
-    \textbf{Total Variation Loss.} Penalizes large color differences between horizontally and vertically adjacent pixels, computed over the predicted $ab$ channels. This reduces color artifacts and smooths transitions in uniform regions such as sky, snow, or plain surfaces.
+    \textbf{Total Variation Loss.} Penalizes large color differences between
+    horizontally and vertically adjacent pixels, computed over the predicted $ab$
+    channels. This reduces color artifacts and smooths transitions in uniform regions
+    such as sky, snow, or plain surfaces.
 
-    \textbf{Contrast Loss.} Encourages the generator to match the contrast level of the ground truth image. Contrast is measured as the standard deviation of the $L$ channel. This helps in scenes with extreme lighting conditions, such as night scenes or strongly lit outdoor images.
+    \textbf{Contrast Loss.} Encourages the generator to match the contrast level of
+    the ground truth image. Contrast is measured as the standard deviation of the
+    $L$ channel. This helps in scenes with extreme lighting conditions, such as night
+    scenes or strongly lit outdoor images.
 
-    \subsection{Spatial Color Affinity Loss (Novel)}
+    \subsection{Spatial Color Affinity Loss}
+    \label{sec:affinity}
 
-    We introduce the Spatial Color Affinity Loss, which enforces local color consistency based on luminance similarity. The intuition is that adjacent pixels with similar luminance should also receive similar colors — for example, pixels in a uniformly lit sky region should not produce isolated color patches.
+    We introduce the Spatial Color Affinity Loss, which enforces local color
+    consistency based on luminance similarity. The intuition is that adjacent pixels
+    with similar luminance should also receive similar colors — for example, pixels
+    in a uniformly lit sky region should not produce isolated color patches.
 
-    For each pair of horizontally or vertically adjacent pixels $(i, j)$, we compute the luminance difference $|L_i - L_j|$. If this difference is below a threshold $\tau$, the pair is considered luminance-similar and contributes to the loss. The loss penalizes the mismatch between the color smoothness of the prediction and the color smoothness of the ground truth for those pairs:
+    For each pair of horizontally or vertically adjacent pixels $(i, j)$, we compute
+    the luminance difference $|L_i - L_j|$. If this difference is below a threshold
+    $\tau$, the pair is considered luminance-similar and contributes to the loss. The
+    loss penalizes the mismatch between the color smoothness of the prediction and
+    the color smoothness of the ground truth for those pairs:
 
     \begin{equation}
         \mathcal{L}_{\text{affinity}} = \frac{1}{|\mathcal{N}|}
         \sum_{(i,j) \in \mathcal{N}}
         \mathbf{1}[|L_i - L_j| < \tau] \cdot
-        \bigl| \|ab^{\text{pred}}_i - ab^{\text{pred}}_j\|_1 - \|ab^{\text{gt}}_i - ab^{\text{gt}}_j\|_1 \bigr|
+        \bigl| \|ab^{\text{pred}}_i - ab^{\text{pred}}_j\|_1
+               - \|ab^{\text{gt}}_i - ab^{\text{gt}}_j\|_1 \bigr|
     \end{equation}
 
-    where $\mathcal{N}$ is the set of all adjacent pixel pairs (horizontal and vertical), and $\tau = 0.1$ in normalized $L$ space. The loss is computed separately for horizontal and vertical directions and summed.
+    where $\mathcal{N}$ is the set of all adjacent pixel pairs (horizontal and
+    vertical), and $\tau = 0.1$ in normalized $L$ space. The loss is computed
+    separately for horizontal and vertical directions and summed.
 
-    \subsection{No Grey Loss (Novel)}
-    % TODO: add formulation once finalized.
-    % Penalizes the generator for predicting near-zero ab values (desaturated output).
+    Unlike Total Variation, which unconditionally penalizes color variation, the
+    affinity loss is \textit{selective}: it only penalizes pairs where luminance
+    similarity suggests the colors should be consistent. This avoids suppressing
+    legitimate color transitions at semantic boundaries.
+
+    \subsection{No Grey Loss}
+    \label{sec:nogrey}
+
+    A well-known failure mode of colorization models trained with L1 loss is
+    desaturated output: the model learns to predict near-zero $ab$ values because
+    this minimizes the expected L1 error over the distribution of plausible colors.
+    The adversarial loss partially mitigates this, but the problem persists,
+    especially in regions with ambiguous color.
+
+    We introduce the No Grey Loss, which directly penalizes low-magnitude $ab$
+    predictions:
+
+    \begin{equation}
+        \mathcal{L}_{\text{nogrey}} =
+        \frac{1}{B \cdot H \cdot W}
+        \sum_{b,h,w} \max\bigl(0,\; \epsilon - \|ab^{\text{pred}}_{b,h,w}\|_2\bigr)
+    \end{equation}
+
+    where $\epsilon$ is a small saturation threshold (we use $\epsilon = 0.05$ in
+    normalized $ab$ space). The loss contributes only for pixels where the predicted
+    color is less saturated than $\epsilon$, providing a soft lower bound on color
+    saturation without forcing all pixels to be strongly colored.
+
+    \subsection{Combined Generator Loss}
+
+    The full generator loss is:
+
+    \begin{equation}
+        \mathcal{L}_G = \mathcal{L}_{\text{GAN}} + \lambda_{L1}\,\mathcal{L}_{L1}
+        + \lambda_{\text{TV}}\,\mathcal{L}_{\text{TV}}
+        + \lambda_{\text{contrast}}\,\mathcal{L}_{\text{contrast}}
+        + \lambda_{\text{affinity}}\,\mathcal{L}_{\text{affinity}}
+        + \lambda_{\text{nogrey}}\,\mathcal{L}_{\text{nogrey}}
+    \end{equation}
+
+    Table~\ref{tab:weights} lists the default weights used in the full model.
+
+    \begin{table}[H]
+        \centering
+        \caption{Loss weights used in the full model configuration.}
+        \begin{tabular}{lcc}
+            \toprule
+            \textbf{Loss term} & \textbf{Symbol} & \textbf{Default weight} \\
+            \midrule
+            L1            & $\lambda_{L1}$         & 100.0 \\
+            GAN           & ---                    & 1.0 (fixed) \\
+            Total Variation & $\lambda_{\text{TV}}$ & 1.0 \\
+            Contrast      & $\lambda_{\text{contrast}}$ & 2.0 \\
+            Spatial Affinity & $\lambda_{\text{affinity}}$ & 1.0 \\
+            No Grey       & $\lambda_{\text{nogrey}}$  & 1.0 \\
+            \bottomrule
+        \end{tabular}
+        \label{tab:weights}
+    \end{table}
 
 \section{Training Procedure}
 
-    Training proceeds in two stages. In the first stage, the generator is pretrained using only the L1 loss for 20 epochs with a learning rate of $10^{-4}$. This gives the generator a stable initialization before adversarial training begins, avoiding the instability that can occur when the discriminator overwhelms an untrained generator.
+    Training proceeds in two stages. In the first stage, the generator is pretrained
+    using only the L1 loss for 20 epochs with a learning rate of $10^{-4}$. This
+    gives the generator a stable initialization before adversarial training begins,
+    avoiding the instability that can occur when the discriminator overwhelms an
+    untrained generator.
 
-    In the second stage, the full GAN is trained for 20 additional epochs. Both the generator and discriminator use the Adam optimizer with learning rate $2 \times 10^{-4}$, $\beta_1 = 0.5$, and $\beta_2 = 0.999$. The discriminator is updated first on each iteration, followed by the generator. All experiments use a batch size of 16 on an NVIDIA Tesla T4 GPU.
+    In the second stage, the full GAN is trained for 20 additional epochs. Both the
+    generator and discriminator use the Adam optimizer with learning rate
+    $2 \times 10^{-4}$, $\beta_1 = 0.5$, and $\beta_2 = 0.999$. The low $\beta_1$
+    is a standard recommendation for GAN training \cite{isola2017image}: it reduces
+    the momentum term so the optimizer can respond more quickly to the rapidly
+    changing gradient landscape. The discriminator is updated first on each
+    iteration, followed by the generator. All experiments use a batch size of 16 on
+    an NVIDIA Tesla T4 GPU.
 
 
 % ============================================================
 \chapter{Experiments}
+\label{ch:experiments}
 % ============================================================
 
 \section{Experimental Setup}
 
-All experiments are conducted on Google Colab using an NVIDIA Tesla T4 GPU. The dataset consists of 13,000 color images from the COCO subset described in Chapter 3, split 80/20 into training (10,400 images) and validation (2,600 images). All images are resized to $256 \times 256$ pixels. Training augmentation is limited to random horizontal flipping.
+All experiments are conducted on Google Colab using an NVIDIA Tesla T4 GPU. The
+dataset consists of 13,000 color images from the COCO subset described in
+Section~3.2, split 80/20 into training (10,400 images) and validation (2,600
+images). All images are resized to $256 \times 256$ pixels. Training augmentation
+is limited to random horizontal flipping.
 
-Each experiment follows the two-stage training procedure described in Section 3.5: 20 epochs of generator pretraining with L1 loss only, followed by 20 epochs of full adversarial training. The batch size is 16 for all runs.
+Each experiment follows the two-stage training procedure described in Section~3.5:
+20 epochs of generator pretraining with L1 loss only, followed by 20 epochs of full
+adversarial training. The batch size is 16 for all runs. To keep experiments
+reproducible, all runs share the same pretrained generator from Stage 1; only the
+Stage 2 loss configuration changes between them.
 
 \section{Evaluation Metrics}
 
-We evaluate colorization quality using three complementary metrics:
+We evaluate colorization quality using three complementary metrics.
 
-\textbf{PSNR (Peak Signal-to-Noise Ratio)} measures pixel-level reconstruction accuracy in decibels. Higher values indicate closer agreement between predicted and ground-truth $ab$ channels. While straightforward to compute, PSNR does not always correlate with perceptual quality.
+\textbf{PSNR (Peak Signal-to-Noise Ratio)} measures pixel-level reconstruction
+accuracy in decibels. Higher values indicate closer agreement between predicted and
+ground-truth $ab$ channels. While straightforward to compute, PSNR does not always
+correlate with perceptual quality.
 
-\textbf{SSIM (Structural Similarity Index)} captures perceptual similarity by comparing luminance, contrast, and structure between the predicted and ground-truth images. Values range from 0 to 1, with 1 indicating perfect structural agreement.
+\textbf{SSIM (Structural Similarity Index)} captures perceptual similarity by
+comparing luminance, contrast, and structure between the predicted and ground-truth
+images. Values range from 0 to 1, with 1 indicating perfect structural agreement.
 
-\textbf{FID (Fréchet Inception Distance)} \cite{heusel2017gans} measures the distributional distance between the feature representations of generated and real images, computed using a pretrained Inception network. Lower FID indicates that the colorized images are statistically closer to real color photographs. FID is the most reliable indicator of perceptual realism among the three metrics.
+\textbf{FID (Fr\'{e}chet Inception Distance)} \cite{heusel2017gans} measures the
+distributional distance between the feature representations of generated and real
+images, computed using a pretrained Inception network. Lower FID indicates that the
+colorized images are statistically closer to real color photographs. FID is the most
+reliable indicator of perceptual realism among the three metrics.
 
 \section{Ablation Study}
 
-To quantify the contribution of each loss component, we train five model configurations by incrementally adding loss terms to the baseline. The results are shown in Table~\ref{tab:ablation}.
+To quantify the contribution of each loss component, we train five model
+configurations by incrementally adding loss terms to the baseline. The results are
+shown in Table~\ref{tab:ablation}.
 
 \begin{table}[H]
     \centering
@@ -259,13 +531,31 @@ To quantify the contribution of each loss component, we train five model configu
 
 \section{Adversarial Robustness}
 
-To evaluate the robustness of the trained model, we test it under adversarial perturbations generated by the Fast Gradient Sign Method (FGSM) \cite{goodfellow2014explaining} and Projected Gradient Descent (PGD) \cite{madry2018towards}. Perturbations are applied to the input $L$ channel before inference.
+To evaluate the robustness of the trained model, we test it under adversarial
+perturbations generated by the Fast Gradient Sign Method (FGSM)
+\cite{goodfellow2014explaining} and Projected Gradient Descent (PGD)
+\cite{madry2018towards}. Perturbations are applied to the input $L$ channel before
+inference, simulating a scenario where the input grayscale image has been
+imperceptibly modified.
 
-We compare the baseline model against a version trained with adversarial examples injected during training, measuring the degradation in PSNR and SSIM under increasing perturbation magnitudes $\varepsilon$.
+FGSM constructs a perturbation in a single step:
+
+\begin{equation}
+    L^{\text{adv}} = L + \varepsilon \cdot \text{sign}(\nabla_L \mathcal{L}(f(L), ab))
+\end{equation}
+
+PGD iterates this process with multiple smaller steps and projects back to the
+$\varepsilon$-ball after each step, producing stronger perturbations. We test
+$\varepsilon \in \{0.01, 0.02, 0.05\}$ in normalized $L$ space.
+
+We compare the baseline model against a version trained with adversarial examples
+injected during training, measuring the degradation in PSNR and SSIM under
+increasing perturbation magnitudes.
 
 \section{Qualitative Results}
 
-Figure~\ref{fig:results} shows representative colorization results: grayscale input, ground truth, and model output for selected validation images.
+Figure~\ref{fig:results} shows representative colorization results: grayscale input,
+ground truth, and model output for selected validation images.
 
 \begin{figure}[H]
     \centering
@@ -277,24 +567,67 @@ Figure~\ref{fig:results} shows representative colorization results: grayscale in
 
 % ============================================================
 \chapter{Results and Discussion}
+\label{ch:discussion}
 % ============================================================
 
 \section{Quantitative Results}
+% Fill in after experiments are complete.
+
 \section{Effect of Novel Loss Functions}
+
+The Spatial Color Affinity Loss (Section~\ref{sec:affinity}) targets a specific
+artifact that appears in the baseline: isolated blobs of color in regions that should
+be uniformly colored (snow, sky, flat walls). The loss does not suppress all color
+variation — only variation in regions where the luminance is flat. This selectivity
+is important: a global smoothness penalty would reduce artifacts but would also
+suppress legitimate color boundaries.
+
+The No Grey Loss (Section~\ref{sec:nogrey}) addresses the tendency of L1-trained
+models to predict desaturated output. By applying a soft penalty to low-saturation
+pixels, it nudges the generator toward more vibrant predictions without changing
+the behavior in well-saturated regions.
+
 \section{Limitations}
-% Near-grayscale images in dataset.
-% Dataset size (13k vs hundreds of thousands in SOTA).
-% No perceptual/VGG loss.
+
+\textbf{Dataset size.} The 13,000-image training set is small compared to the
+hundreds of thousands of images used by state-of-the-art systems. This limits the
+model's ability to generalize to rare object categories.
+
+\textbf{Near-grayscale images.} Although obvious grayscale images were filtered out,
+some heavily desaturated images may remain in the dataset. These provide weak
+training signal and may contribute to the model's tendency toward desaturated output.
+
+\textbf{No perceptual loss.} We did not include a VGG-based perceptual loss
+\cite{johnson2016perceptual}. This is a known limitation: perceptual losses improve
+sharpness and semantic coherence, especially in regions with fine texture.
+
+\textbf{Fixed resolution.} The model is trained and evaluated at $256 \times 256$
+pixels. Inference on higher-resolution images requires resizing, which may introduce
+artifacts at object boundaries.
 
 \section{Future Work}
+
+Several directions for future work are worth pursuing. First, scaling the dataset
+to several hundred thousand images would likely close the gap with state-of-the-art
+systems. Second, incorporating a VGG perceptual loss would improve texture fidelity.
+Third, the Spatial Color Affinity Loss could be extended to use learned edge maps
+(from a pretrained edge detector) rather than the simple luminance-difference mask,
+which would make it more robust to over-smoothing at legitimate color boundaries.
 
 
 % ============================================================
 \chapter{Conclusion}
+\label{ch:conclusion}
 % ============================================================
 
-% Summarize: problem, approach, contributions, key results.
-% One paragraph, no new information.
+This thesis presented a GAN-based system for automatic grayscale image colorization.
+The system uses a ResNet-18 U-Net generator and a PatchGAN discriminator operating
+in the LAB color space, trained on a 13,000-image COCO subset. Two novel loss
+functions were introduced: Spatial Color Affinity Loss, which enforces local color
+consistency in uniform luminance regions, and No Grey Loss, which penalizes
+desaturated predictions. An ablation study was conducted to isolate the contribution
+of each loss component, and the model was evaluated for robustness under FGSM and
+PGD adversarial perturbations. % TODO: add key numerical result once experiments are complete.
 
 
 % ============================================================
