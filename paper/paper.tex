@@ -208,6 +208,31 @@ where $\epsilon = 0.05$ in normalized $ab$ space. The loss is zero for pixels
 whose predicted saturation exceeds $\epsilon$ and grows linearly as the prediction
 approaches zero.
 
+\subsection{Uncertainty-Aware Extension}
+\label{sec:uncertainty}
+
+We further extend the model with a per-pixel uncertainty estimate. A lightweight
+$1 \times 1$ convolutional head is appended to the generator output and predicts
+log-variance $\log \sigma^2$ for each ab channel. The L1 reconstruction loss is
+replaced with Gaussian NLL:
+
+\begin{equation}
+    \mathcal{L}_{\text{NLL}} = \frac{1}{2}\!\left(
+        \log \sigma^2 + (ab^{\text{gt}} - \hat{ab})^2 e^{-\log \sigma^2}
+    \right)
+\end{equation}
+
+The regularization term $\log \sigma^2$ prevents the model from claiming
+everything is uncertain; the reconstruction term discounts errors in genuinely
+ambiguous regions. The resulting uncertainty map is a direct model output —
+no extra inference pass required — and highlights regions where human review
+is most valuable (walls, metal, shadowed areas vs.\ sky, grass, skin).
+
+Training uses a two-phase strategy: the backbone is frozen for 5 epochs while
+the uncertainty head learns to assign uncertainty without disturbing the
+pretrained color predictions, then all parameters are fine-tuned jointly for
+15 further epochs.
+
 \subsection{Full Loss}
 
 The full generator loss is:

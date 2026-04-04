@@ -134,6 +134,13 @@ This thesis makes the following contributions:
     \item \textbf{No Grey Loss}: a novel loss that discourages the generator from
           predicting desaturated (near-grey) output by penalizing low $ab$ magnitude.
 
+    \item \textbf{Uncertainty-Aware Colorization}: an extension that adds a
+          lightweight uncertainty head to the generator, enabling the model to
+          output a per-pixel confidence map alongside the color prediction.
+          High uncertainty identifies regions where the model cannot reliably
+          determine the correct color, making the output directly useful for
+          human-in-the-loop photograph restoration.
+
     \item An ablation study quantifying the individual and combined effect of each
           loss component on PSNR, SSIM, and FID.
 
@@ -417,6 +424,54 @@ approximately 10,400 training images and 2,600 validation images.
     normalized $ab$ space). The loss contributes only for pixels where the predicted
     color is less saturated than $\epsilon$, providing a soft lower bound on color
     saturation without forcing all pixels to be strongly colored.
+
+    \subsection{Uncertainty-Aware Colorization}
+    \label{sec:uncertainty}
+
+    Standard colorization models predict a single color per pixel, implicitly
+    assuming the mapping from luminance to color is deterministic. In practice,
+    colorization is ill-posed: a gray concrete wall, a gray stone, and a gray road
+    all have similar luminance but could plausibly receive different colors.
+    Predicting a single value forces the model to average over these possibilities,
+    which contributes to the desaturated output characteristic of L1-trained models.
+
+    We extend the generator with an \textit{uncertainty head}: a single $1 \times 1$
+    convolutional layer that takes the predicted mean $\hat{ab}$ as input and
+    produces a per-pixel log-variance $\log \sigma^2$ for each of the two ab
+    channels. The generator therefore outputs both a color prediction and a
+    confidence estimate without any change to the encoder-decoder backbone.
+
+    The reconstruction loss is replaced with the Gaussian negative log-likelihood:
+
+    \begin{equation}
+        \mathcal{L}_{\text{NLL}} = \frac{1}{2}
+        \left( \log \sigma^2 + \frac{(ab^{\text{gt}} - \hat{ab})^2}{\sigma^2} \right)
+        = \frac{1}{2} \left( \log \sigma + (ab^{\text{gt}} - \hat{ab})^2 e^{-\log \sigma^2} \right)
+    \end{equation}
+
+    This loss has two complementary terms. The reconstruction term
+    $(ab^{\text{gt}} - \hat{ab})^2 e^{-\log \sigma^2}$ penalizes errors more
+    heavily when the model claims high confidence (small $\sigma^2$). The
+    regularization term $\log \sigma^2$ prevents the model from trivially avoiding
+    reconstruction penalties by claiming everything is uncertain. Together they
+    force the model to match the uncertainty to the actual difficulty of prediction:
+    high uncertainty for ambiguous gray regions (walls, metal, concrete), low
+    uncertainty for semantically unambiguous regions (sky, grass, skin).
+
+    \textbf{Training strategy.} The uncertainty head is initialized with zero weights
+    and a bias of $-2$, so $\log \sigma^2 \approx -2$ initially and the variance
+    starts near $e^{-2} \approx 0.14$. Training proceeds in two phases. In Phase~1
+    (5 epochs), the backbone is frozen and only the uncertainty head is trained, so
+    the head learns to estimate uncertainty without disturbing the pretrained color
+    predictions. In Phase~2 (15 epochs), all parameters are unfrozen for joint
+    fine-tuning.
+
+    The uncertainty map $\sigma(x, y) = \sqrt{\text{mean}_{c}(\sigma^2_c(x,y))}$
+    is a direct output of the model at inference time, requiring no additional
+    computation. It can be visualized as a heatmap over the colorized image to
+    identify regions where the model is unsure — directly useful for
+    human-in-the-loop restoration workflows where expert attention should focus
+    on the most ambiguous areas.
 
     \subsection{Combined Generator Loss}
 
