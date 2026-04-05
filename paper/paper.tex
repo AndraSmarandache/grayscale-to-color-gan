@@ -228,10 +228,21 @@ ambiguous regions. The resulting uncertainty map is a direct model output —
 no extra inference pass required — and highlights regions where human review
 is most valuable (walls, metal, shadowed areas vs.\ sky, grass, skin).
 
-Training uses a two-phase strategy: the backbone is frozen for 5 epochs while
+The log-variance is clamped to $[-4, 4]$ before the exponential, constraining
+the effective variance to $[e^{-4}, e^{4}]$. Wider clamps allowed the model to
+claim near-infinite uncertainty, collapsing the uncertainty map to a spatially
+uniform constant. The NLL loss is used with $\lambda_{\text{recon}} = 1.0$
+(not $100$ as in the L1 baseline), since the $\log \sigma^2$ term
+self-normalizes the loss magnitude; using $\lambda_{\text{recon}} = 100$ drove
+the loss to $-200$ and caused complete uncertainty collapse.
+
+Training uses a two-phase strategy: the backbone is frozen for 10 epochs while
 the uncertainty head learns to assign uncertainty without disturbing the
 pretrained color predictions, then all parameters are fine-tuned jointly for
-15 further epochs.
+10 further epochs. Gradient clipping ($\|\nabla\|_2 \leq 1.0$) is applied
+to stabilize Phase~2. A \texttt{ReduceLROnPlateau} scheduler halves the
+learning rate after 3 epochs without PSNR improvement, and early stopping
+(patience 5) prevents overfitting.
 
 \subsection{Full Loss}
 
@@ -250,7 +261,10 @@ with $\lambda_{\text{aff}} = 1.0$ and $\lambda_{\text{ng}} = 1.0$.
 Training proceeds in two stages. In Stage 1, the generator is pretrained with L1
 loss only for 20 epochs (Adam, lr $= 10^{-4}$). Stage 2 trains the full GAN for
 20 epochs (Adam, lr $= 2 \times 10^{-4}$, $\beta_1 = 0.5$, $\beta_2 = 0.999$,
-batch size 16). The discriminator is updated before the generator each iteration.
+batch size 16). The discriminator is updated every step via a
+\texttt{d\_update\_freq} parameter (default $k=1$). Threshold-based discriminator
+freezing was found to stall adversarial training after the first epoch and was
+replaced by this fixed-frequency schedule.
 
 
 % ============================================================
