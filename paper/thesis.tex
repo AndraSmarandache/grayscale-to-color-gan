@@ -445,8 +445,8 @@ approximately 10,400 training images and 2,600 validation images.
 
     \begin{equation}
         \mathcal{L}_{\text{NLL}} = \frac{1}{2}
-        \left( \log \sigma^2 + \frac{(ab^{\text{gt}} - \hat{ab})^2}{\sigma^2} \right)
-        = \frac{1}{2} \left( \log \sigma + (ab^{\text{gt}} - \hat{ab})^2 e^{-\log \sigma^2} \right)
+        \left( \log \sigma^2 + (ab^{\text{gt}} - \hat{ab})^2 e^{-\log \sigma^2} \right)
+        \label{eq:nll}
     \end{equation}
 
     This loss has two complementary terms. The reconstruction term
@@ -458,13 +458,39 @@ approximately 10,400 training images and 2,600 validation images.
     high uncertainty for ambiguous gray regions (walls, metal, concrete), low
     uncertainty for semantically unambiguous regions (sky, grass, skin).
 
+    \textbf{Implementation details.}
+    Unlike the L1 loss where $\lambda_{\text{recon}} = 100$ is needed to match the
+    magnitude of the GAN loss, the NLL loss is used with $\lambda_{\text{recon}} = 1.0$.
+    The NLL loss self-normalizes through its $\log \sigma^2$ term: as the model
+    reduces prediction error it simultaneously reduces $\sigma^2$, keeping the loss
+    magnitude in a stable range regardless of the reconstruction error scale. Setting
+    $\lambda_{\text{recon}} = 100$ caused the NLL loss to collapse to values near
+    $-200$, driving the model to predict extreme uncertainty everywhere.
+
+    The log-variance is clamped to $[-4, 4]$ before the exponential in
+    Equation~\ref{eq:nll}, which constrains the effective per-pixel variance to the
+    interval $[e^{-4}, e^{4}] \approx [0.018, 54.6]$. Wider clamps (e.g.\ $[-10, 10]$)
+    allowed the model to predict near-infinite uncertainty in difficult regions, which
+    effectively masked the reconstruction term and collapsed the uncertainty map to a
+    spatially uniform constant.
+
+    Gradient clipping ($\|\nabla\|_2 \leq 1.0$) is applied to the generator after
+    each backward pass, which stabilizes training when the backbone is unfrozen in
+    Phase~2 and the full model is being fine-tuned jointly.
+
     \textbf{Training strategy.} The uncertainty head is initialized with zero weights
-    and a bias of $-2$, so $\log \sigma^2 \approx -2$ initially and the variance
-    starts near $e^{-2} \approx 0.14$. Training proceeds in two phases. In Phase~1
-    (5 epochs), the backbone is frozen and only the uncertainty head is trained, so
-    the head learns to estimate uncertainty without disturbing the pretrained color
-    predictions. In Phase~2 (15 epochs), all parameters are unfrozen for joint
+    and a bias of $-2$, giving $\log \sigma^2 \approx -2$ initially and a starting
+    variance near $e^{-2} \approx 0.14$. Training proceeds in two phases. In Phase~1
+    (10 epochs), the backbone is frozen and only the uncertainty head is trained.
+    The extended warm-up gives the head sufficient time to converge before the backbone
+    is unfrozen, preventing it from unlearning pretrained color features when joint
+    fine-tuning begins. In Phase~2 (10 epochs), all parameters are unfrozen for joint
     fine-tuning.
+
+    A \texttt{ReduceLROnPlateau} scheduler (factor $0.5$, patience $3$ epochs)
+    monitors validation PSNR and halves the learning rate for both $G$ and $D$ when
+    improvement stalls. Early stopping (patience $5$ epochs) terminates training if
+    PSNR does not improve, preventing overfitting on the small dataset.
 
     The uncertainty map $\sigma(x, y) = \sqrt{\text{mean}_{c}(\sigma^2_c(x,y))}$
     is a direct output of the model at inference time, requiring no additional
@@ -518,9 +544,13 @@ approximately 10,400 training images and 2,600 validation images.
     $2 \times 10^{-4}$, $\beta_1 = 0.5$, and $\beta_2 = 0.999$. The low $\beta_1$
     is a standard recommendation for GAN training \cite{isola2017image}: it reduces
     the momentum term so the optimizer can respond more quickly to the rapidly
-    changing gradient landscape. The discriminator is updated first on each
-    iteration, followed by the generator. All experiments use a batch size of 16 on
-    an NVIDIA Tesla T4 GPU.
+    changing gradient landscape. The discriminator is updated every $k$ steps
+    (default $k = 1$, i.e.\ every step), controlled by a \texttt{d\_update\_freq}
+    parameter. This is preferable to threshold-based freezing, which was found to
+    cause the discriminator to stall after the first epoch whenever its loss fell
+    below the threshold, effectively halting adversarial training. The generator
+    is updated on every step regardless of the discriminator update schedule.
+    All experiments use a batch size of 16 on an NVIDIA Tesla T4 GPU.
 
 
 % ============================================================
