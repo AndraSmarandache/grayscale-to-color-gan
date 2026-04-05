@@ -26,8 +26,9 @@ class GaussianNLLLoss(nn.Module):
         self.reduction = reduction
 
     def forward(self, ab_mean, log_var, ab_target):
-        # clamp log_var for numerical stability
-        log_var = torch.clamp(log_var, -10.0, 10.0)
+        # tighter clamp: prevents the model from collapsing to extreme uncertainty
+        # or extreme confidence, keeping the uncertainty map meaningful
+        log_var = torch.clamp(log_var, -4.0, 4.0)
         loss = 0.5 * (log_var + (ab_target - ab_mean) ** 2 * torch.exp(-log_var))
         if self.reduction == 'mean':
             return loss.mean()
