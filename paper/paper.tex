@@ -211,10 +211,14 @@ approaches zero.
 \subsection{Uncertainty-Aware Extension}
 \label{sec:uncertainty}
 
-We further extend the model with a per-pixel uncertainty estimate. A lightweight
-$1 \times 1$ convolutional head is appended to the generator output and predicts
-log-variance $\log \sigma^2$ for each ab channel. The L1 reconstruction loss is
-replaced with Gaussian NLL:
+We further extend the model with a per-pixel uncertainty estimate. A three-layer
+convolutional head conditioned on the concatenation of the luminance channel $L$
+and the predicted mean $\hat{ab}$ predicts log-variance $\log \sigma^2$ for each
+ab channel: $\text{Conv}_{3\to16}(3{\times}3) \to \text{LReLU} \to
+\text{Conv}_{16\to8}(3{\times}3) \to \text{LReLU} \to \text{Conv}_{8\to2}(1{\times}1)$.
+Conditioning on $L$ provides semantic signal (bright sky vs.\ dark shadow) that is
+not fully recoverable from $\hat{ab}$ alone. The L1 reconstruction loss is replaced
+with Gaussian NLL:
 
 \begin{equation}
     \mathcal{L}_{\text{NLL}} = \frac{1}{2}\!\left(
@@ -222,39 +226,52 @@ replaced with Gaussian NLL:
     \right)
 \end{equation}
 
-The regularization term $\log \sigma^2$ prevents the model from claiming
-everything is uncertain; the reconstruction term discounts errors in genuinely
-ambiguous regions. The resulting uncertainty map is a direct model output —
-no extra inference pass required — and highlights regions where human review
-is most valuable (walls, metal, shadowed areas vs.\ sky, grass, skin).
+The regularization term $\log \sigma^2$ prevents trivial uncertainty inflation;
+the reconstruction term discounts errors in genuinely ambiguous regions. The
+resulting map is a direct inference output — no extra pass required.
 
-The log-variance is clamped to $[-4, 4]$ before the exponential, constraining
-the effective variance to $[e^{-4}, e^{4}]$. Wider clamps allowed the model to
-claim near-infinite uncertainty, collapsing the uncertainty map to a spatially
-uniform constant. The NLL loss is used with $\lambda_{\text{recon}} = 1.0$
-(not $100$ as in the L1 baseline), since the $\log \sigma^2$ term
-self-normalizes the loss magnitude; using $\lambda_{\text{recon}} = 100$ drove
-the loss to $-200$ and caused complete uncertainty collapse.
+The log-variance is clamped to $[-3, 3]$ (effective variance $[e^{-3},e^{3}]$).
+A wider $[-4,4]$ clamp was found empirically to worsen collapse: the NLL gradient
+$\frac{1}{2}(1 - \epsilon^2 e^{-\log\sigma^2})$ is always positive when
+reconstruction error $\epsilon$ is small, pushing $\log\sigma^2$ toward the lower
+boundary and producing a spatially uniform map (observed mean $\approx e^{-2}$,
+std $0.0004$ in our first run). We address this with two additional regularizers.
 
-Training uses a two-phase strategy: the backbone is frozen for 10 epochs while
-the uncertainty head learns to assign uncertainty without disturbing the
-pretrained color predictions, then all parameters are fine-tuned jointly for
-10 further epochs. Gradient clipping ($\|\nabla\|_2 \leq 1.0$) is applied
-to stabilize Phase~2. A \texttt{ReduceLROnPlateau} scheduler halves the
-learning rate after 3 epochs without PSNR improvement, and early stopping
-(patience 5) prevents overfitting.
+\textbf{Spatial diversity loss.} $\mathcal{L}_{\text{div}} = -\text{Var}_{h,w}(\log\sigma^2)$
+directly maximizes the spatial variance of the log-variance map, opposing the
+collapsing NLL gradient ($\lambda_{\text{div}} = 0.05$).
+
+\textbf{Calibration loss.} $\mathcal{L}_{\text{calib}} = \text{MSE}(\tilde{u}, \tilde{\epsilon})$
+where $\tilde{\epsilon}$ is the min-max normalized per-pixel squared error and
+$\tilde{u}$ is the normalized per-pixel standard deviation, both computed per
+image. This enforces spatial alignment between uncertainty and actual prediction
+difficulty ($\lambda_{\text{calib}} = 0.1$).
+
+The NLL loss uses $\lambda_{\text{NLL}} = 1.0$; setting $100$ drove the loss to
+$-200$ and caused complete collapse. Training uses a two-phase strategy: the
+backbone is frozen for 10 epochs while the head learns, then all parameters are
+fine-tuned jointly for 10 further epochs. Gradient clipping ($\|\nabla\|_2 \leq 1.0$)
+stabilizes Phase~2. A \texttt{ReduceLROnPlateau} scheduler (factor $0.5$, patience $3$)
+monitors PSNR; early stopping (patience $5$) prevents overfitting.
 
 \subsection{Full Loss}
 
 The full generator loss is:
 
 \begin{equation}
-    \mathcal{L}_G = \mathcal{L}_{\text{base}}
+    \mathcal{L}_G = \mathcal{L}_{\text{GAN}}
+    + \lambda_{\text{NLL}}\,\mathcal{L}_{\text{NLL}}
+    + \lambda_{\text{TV}}\,\mathcal{L}_{\text{TV}}
+    + \lambda_{c}\,\mathcal{L}_{\text{contrast}}
     + \lambda_{\text{aff}}\,\mathcal{L}_{\text{aff}}
     + \lambda_{\text{ng}}\,\mathcal{L}_{\text{ng}}
+    + \lambda_{\text{div}}\,\mathcal{L}_{\text{div}}
+    + \lambda_{\text{calib}}\,\mathcal{L}_{\text{calib}}
 \end{equation}
 
-with $\lambda_{\text{aff}} = 1.0$ and $\lambda_{\text{ng}} = 1.0$.
+with $\lambda_{\text{NLL}} = 1.0$, $\lambda_{\text{aff}} = 1.0$,
+$\lambda_{\text{ng}} = 1.0$, $\lambda_{\text{div}} = 0.05$,
+$\lambda_{\text{calib}} = 0.1$.
 
 \subsection{Training Procedure}
 
@@ -328,11 +345,15 @@ a modest PSNR improvement by reducing the frequency of desaturated output.
 
 \section{Conclusion}
 
-We introduced two novel loss functions for GAN-based grayscale image colorization.
-The Spatial Color Affinity Loss enforces local color consistency in flat luminance
-regions, reducing isolated color artifacts. The No Grey Loss penalizes desaturated
-predictions, improving color vividness. Both losses are differentiable, lightweight,
-and can be combined with any existing GAN colorization framework. % TODO: quantitative summary.
+We introduced four novel contributions for GAN-based grayscale image colorization:
+(1) the Spatial Color Affinity Loss, which enforces local color consistency in flat
+luminance regions and reduces isolated color artifacts; (2) the No Grey Loss, which
+penalizes desaturated predictions to improve color vividness; (3) a spatially-aware
+uncertainty head that produces per-pixel confidence maps without any additional
+inference cost; and (4) two uncertainty regularizers — a spatial diversity loss and
+a calibration loss — that prevent the uncertainty collapse failure mode observed with
+NLL-only training. All components are differentiable, lightweight, and can be combined
+with any existing GAN colorization framework. % TODO: quantitative summary after full training run.
 
 
 % ============================================================
