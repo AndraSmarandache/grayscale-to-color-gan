@@ -435,10 +435,20 @@ approximately 10,400 training images and 2,600 validation images.
     Predicting a single value forces the model to average over these possibilities,
     which contributes to the desaturated output characteristic of L1-trained models.
 
-    We extend the generator with an \textit{uncertainty head}: a single $1 \times 1$
-    convolutional layer that takes the predicted mean $\hat{ab}$ as input and
-    produces a per-pixel log-variance $\log \sigma^2$ for each of the two ab
-    channels. The generator therefore outputs both a color prediction and a
+    We extend the generator with an \textit{uncertainty head}: a three-layer
+    convolutional network that takes as input the concatenation of the luminance
+    channel $L$ and the predicted mean $\hat{ab}$, producing a per-pixel
+    log-variance $\log \sigma^2$ for each of the two ab channels.
+    The architecture is: $\text{Conv}_{3\to16}(3\times3) \to \text{LeakyReLU}
+    \to \text{Conv}_{16\to8}(3\times3) \to \text{LeakyReLU} \to
+    \text{Conv}_{8\to2}(1\times1)$, with zero weight initialization and a bias
+    of $-1$ in the output layer, so the head starts near $\log\sigma^2 = -1$
+    (variance $\approx 0.37$).
+    Conditioning on $L$ is critical: the luminance channel carries direct
+    information about scene semantics (bright sky vs.\ dark shadow) that is not
+    fully preserved in $\hat{ab}$, giving the head the signal it needs to
+    produce spatially varying uncertainty rather than a uniform map.
+    The generator therefore outputs both a color prediction and a calibrated
     confidence estimate without any change to the encoder-decoder backbone.
 
     The reconstruction loss is replaced with the Gaussian negative log-likelihood:
@@ -467,16 +477,61 @@ approximately 10,400 training images and 2,600 validation images.
     $\lambda_{\text{recon}} = 100$ caused the NLL loss to collapse to values near
     $-200$, driving the model to predict extreme uncertainty everywhere.
 
-    The log-variance is clamped to $[-4, 4]$ before the exponential in
+    The log-variance is clamped to $[-3, 3]$ before the exponential in
     Equation~\ref{eq:nll}, which constrains the effective per-pixel variance to the
-    interval $[e^{-4}, e^{4}] \approx [0.018, 54.6]$. Wider clamps (e.g.\ $[-10, 10]$)
-    allowed the model to predict near-infinite uncertainty in difficult regions, which
-    effectively masked the reconstruction term and collapsed the uncertainty map to a
-    spatially uniform constant.
+    interval $[e^{-3}, e^{3}] \approx [0.05, 20.1]$. The tighter clamp (reduced
+    from an initial $[-4, 4]$) was motivated by empirical observation: with the
+    wider range the NLL gradient could always push $\log\sigma^2$ toward the
+    lower boundary, causing uniform-map collapse even with stronger regularization.
 
     Gradient clipping ($\|\nabla\|_2 \leq 1.0$) is applied to the generator after
     each backward pass, which stabilizes training when the backbone is unfrozen in
     Phase~2 and the full model is being fine-tuned jointly.
+
+    \textbf{Spatial diversity regularizer.}
+    The NLL loss alone is insufficient to produce spatially varying uncertainty.
+    Its gradient with respect to $\log\sigma^2$ is
+    $\frac{1}{2}(1 - \epsilon^2 e^{-\log\sigma^2})$, where
+    $\epsilon = ab^{\text{gt}} - \hat{ab}$. When reconstruction error $\epsilon$
+    is small (which it is after pre-training), this gradient is always positive,
+    consistently pushing $\log\sigma^2$ toward the lower clamp boundary. The
+    result is a spatially uniform map at the clamp floor — an \textit{uncertainty
+    collapse} failure mode observed in our first training run (mean uncertainty
+    $0.135 \approx e^{-2}$, std $0.0004$).
+
+    To counteract this we add a spatial diversity loss:
+
+    \begin{equation}
+        \mathcal{L}_{\text{div}} = -\,\text{Var}_{h,w}(\log\sigma^2)
+        \label{eq:div}
+    \end{equation}
+
+    where the variance is computed over spatial dimensions $(h,w)$ for each
+    image in the batch and then averaged. Maximizing spatial variance directly
+    opposes the collapsing force of the NLL gradient
+    ($\lambda_{\text{div}} = 0.05$).
+
+    \textbf{Calibration loss.}
+    Even with diversity regularization the uncertainty map need not be
+    \textit{calibrated} — high uncertainty should coincide with high prediction
+    error. We enforce this with a direct spatial supervision signal:
+
+    \begin{equation}
+        \mathcal{L}_{\text{calib}} = \text{MSE}\!\left(
+            \tilde{u}(x,y),\; \tilde{\epsilon}(x,y)
+        \right)
+        \label{eq:calib}
+    \end{equation}
+
+    where $\tilde{\epsilon}(x,y) = \text{mean}_c(\epsilon_c^2)$ is the
+    per-pixel squared error, $\tilde{u}(x,y) = \text{mean}_c(\sigma_c)$
+    is the per-pixel mean standard deviation, and both maps are
+    min-max normalized to $[0,1]$ within each image before the MSE
+    is evaluated. Normalization removes the absolute-scale mismatch between
+    uncertainty and error while preserving relative spatial structure.
+    The stop-gradient on the error map ensures the calibration signal
+    does not update the color prediction branch
+    ($\lambda_{\text{calib}} = 0.1$).
 
     \textbf{Training strategy.} The uncertainty head is initialized with zero weights
     and a bias of $-2$, giving $\log \sigma^2 \approx -2$ initially and a starting
@@ -504,28 +559,32 @@ approximately 10,400 training images and 2,600 validation images.
     The full generator loss is:
 
     \begin{equation}
-        \mathcal{L}_G = \mathcal{L}_{\text{GAN}} + \lambda_{L1}\,\mathcal{L}_{L1}
+        \mathcal{L}_G = \mathcal{L}_{\text{GAN}} + \lambda_{\text{NLL}}\,\mathcal{L}_{\text{NLL}}
         + \lambda_{\text{TV}}\,\mathcal{L}_{\text{TV}}
         + \lambda_{\text{contrast}}\,\mathcal{L}_{\text{contrast}}
         + \lambda_{\text{affinity}}\,\mathcal{L}_{\text{affinity}}
         + \lambda_{\text{nogrey}}\,\mathcal{L}_{\text{nogrey}}
+        + \lambda_{\text{div}}\,\mathcal{L}_{\text{div}}
+        + \lambda_{\text{calib}}\,\mathcal{L}_{\text{calib}}
     \end{equation}
 
     Table~\ref{tab:weights} lists the default weights used in the full model.
 
     \begin{table}[H]
         \centering
-        \caption{Loss weights used in the full model configuration.}
+        \caption{Loss weights used in the uncertainty-aware model configuration.}
         \begin{tabular}{lcc}
             \toprule
             \textbf{Loss term} & \textbf{Symbol} & \textbf{Default weight} \\
             \midrule
-            L1            & $\lambda_{L1}$         & 100.0 \\
+            NLL (reconstruction + uncertainty) & $\lambda_{\text{NLL}}$ & 1.0 \\
             GAN           & ---                    & 1.0 (fixed) \\
             Total Variation & $\lambda_{\text{TV}}$ & 1.0 \\
             Contrast      & $\lambda_{\text{contrast}}$ & 2.0 \\
             Spatial Affinity & $\lambda_{\text{affinity}}$ & 1.0 \\
             No Grey       & $\lambda_{\text{nogrey}}$  & 1.0 \\
+            Spatial Diversity & $\lambda_{\text{div}}$  & 0.05 \\
+            Calibration   & $\lambda_{\text{calib}}$   & 0.1 \\
             \bottomrule
         \end{tabular}
         \label{tab:weights}
@@ -671,6 +730,37 @@ The No Grey Loss (Section~\ref{sec:nogrey}) addresses the tendency of L1-trained
 models to predict desaturated output. By applying a soft penalty to low-saturation
 pixels, it nudges the generator toward more vibrant predictions without changing
 the behavior in well-saturated regions.
+
+\subsection{Uncertainty Head: Preliminary Results and Analysis}
+\label{sec:uncertainty_results}
+
+An initial training run of the uncertainty-aware model was conducted to validate
+the architecture before full experiments. The run used 20 phases (Phase~1: backbone
+frozen, Phase~2: joint fine-tuning) with $\lambda_{\text{NLL}} = 1.0$,
+$\lambda_{\text{div}} = 0.05$, $\lambda_{\text{calib}} = 0.1$, clamp $[-3, 3]$.
+
+\textbf{Colorization quality.} PSNR improved from $24.50$\,dB at epoch~1 to
+$24.87$\,dB, consistent with pre-trained model quality. The NLL-trained model
+matched the L1 baseline on reconstruction despite the added uncertainty objective,
+demonstrating that the two-phase strategy successfully protects the pretrained color
+features.
+
+\textbf{Uncertainty collapse (first run diagnosis).} The uncertainty maps were
+visually uniform across all test images. Histogramming the per-pixel uncertainty
+values revealed a spike at $\approx 0.135 \approx e^{-2}$ with standard deviation
+$0.0004$ — essentially a delta function. This is the \textit{uncertainty collapse}
+failure mode: the NLL gradient with respect to $\log\sigma^2$ is
+$\frac{1}{2}(1 - \epsilon^2 e^{-\log\sigma^2})$. After pre-training, $\epsilon$
+is small everywhere, so this gradient is always positive, pushing $\log\sigma^2$
+toward the lower clamp boundary. The head had no mechanism to produce spatial
+variation.
+
+This diagnosis motivated the three-part redesign described in
+Section~\ref{sec:uncertainty}: (i) conditioning the head on $L$ to provide
+semantic signal, (ii) the spatial diversity loss $\mathcal{L}_{\text{div}}$
+to directly oppose the collapsing gradient, and (iii) the calibration loss
+$\mathcal{L}_{\text{calib}}$ to enforce alignment between uncertainty and
+prediction error. The redesigned model is the subject of ongoing training.
 
 \section{Limitations}
 
