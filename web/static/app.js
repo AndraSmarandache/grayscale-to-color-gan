@@ -446,7 +446,6 @@ function openFmapPanel(key, blockEl) {
 
   closeInfoPanel();
 
-  // mark active block
   document.querySelectorAll(".ublock").forEach(b => b.classList.remove("active"));
   if (blockEl) blockEl.classList.add("active");
   activeBlockKey = key;
@@ -460,16 +459,37 @@ function openFmapPanel(key, blockEl) {
   grid.innerHTML = "";
   lbImages = fm.channels.map(b64src);
 
+  // build deck of cards: card 0 = back (first DOM, rendered under), card n-1 = front (last DOM, on top)
+  const scene = document.createElement("div");
+  scene.className = "deck-scene";
+
+  const deck = document.createElement("div");
+  deck.className = "deck";
+
+  const n = fm.channels.length;
+  const maxI = Math.max(n - 1, 1);
+
   fm.channels.forEach((ch, i) => {
-    const thumb = document.createElement("div");
-    thumb.className = "fmap-thumb";
+    const card = document.createElement("div");
+    card.className = "deck-card";
+    // normalize to 0-15 range so CSS transform values stay consistent
+    card.style.setProperty("--i", (i / maxI) * 15);
+
     const img = document.createElement("img");
     img.src = b64src(ch);
-    img.alt = `channel ${i}`;
-    thumb.appendChild(img);
-    thumb.addEventListener("click", () => openLightbox(i));
-    grid.appendChild(thumb);
+    img.alt = `ch ${i}`;
+    card.appendChild(img);
+    card.addEventListener("click", (e) => { e.stopPropagation(); openLightbox(i); });
+    deck.appendChild(card);
   });
+
+  const hint = document.createElement("p");
+  hint.className = "deck-hint";
+  hint.textContent = "Hover to fan out, click any filter to expand";
+
+  scene.appendChild(deck);
+  scene.appendChild(hint);
+  grid.appendChild(scene);
 
   const panel = document.getElementById("fmap-panel");
   panel.classList.remove("hidden");
