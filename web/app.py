@@ -11,7 +11,6 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
-# add project root to path so we can import from src/
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -21,26 +20,28 @@ CHECKPOINT_PATH = os.environ.get("CHECKPOINT_PATH", os.path.join(ROOT, "web", "m
 USE_UNCERTAINTY = os.environ.get("USE_UNCERTAINTY", "false").lower() == "true"
 IMG_SIZE = 256
 
-# forward hooks store intermediate encoder outputs here
 _feature_maps = {}
 _hooks = []
 
 
 def register_hooks(net_G):
-    # fastai's DynamicUnet stores the ResNet body as layers.0
-    # the 4 ResNet groups are at indices 4,5,6,7 inside that Sequential
-    # so full names are layers.0.4 ... layers.0.7
-    # if wrapped in UncertaintyGenerator they become base.layers.0.4 etc.
+    # encoder groups are inside the ResNet body at layers.0.4 ... layers.0.7
+    # decoder UnetBlocks are at layers.4 ... layers.7
+    # bottleneck convolutions are at layers.3
     targets = {
-        "layers.0.4": "layer1",
-        "layers.0.5": "layer2",
-        "layers.0.6": "layer3",
-        "layers.0.7": "layer4",
+        "layers.0.4": "enc1",
+        "layers.0.5": "enc2",
+        "layers.0.6": "enc3",
+        "layers.0.7": "enc4",
+        "layers.3":   "bottleneck",
+        "layers.4":   "dec4",
+        "layers.5":   "dec3",
+        "layers.6":   "dec2",
+        "layers.7":   "dec1",
     }
     hooked = set()
 
     for full_name, module in net_G.named_modules():
-        # match either direct or wrapped (base.layers.0.4)
         for suffix, label in targets.items():
             if full_name == suffix or full_name.endswith("." + suffix):
                 def make_hook(key):
@@ -60,8 +61,6 @@ def load_model(path, uncertainty):
         net_G = UncertaintyGenerator(net_G)
 
     state = torch.load(path, map_location="cpu")
-
-    # checkpoints are saved with different key names depending on when/how they were saved
     if isinstance(state, dict):
         for key in ("generator_state_dict", "net_G", "model"):
             if key in state:
@@ -75,7 +74,6 @@ def load_model(path, uncertainty):
 
 
 def array_to_b64(arr):
-    # arr is float32 numpy, values 0-1, shape [H,W] or [H,W,3]
     arr = np.clip(arr, 0, 1)
     arr_u8 = (arr * 255).astype(np.uint8)
     mode = "L" if arr.ndim == 2 else "RGB"
@@ -84,10 +82,11 @@ def array_to_b64(arr):
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def extract_feature_grid(fmap_tensor, n=8, size=80):
-    # take first n channels from [1, C, H, W], normalize each to 0-1, return as base64 list
+def extract_feature_channels(fmap_tensor, n=16, size=72):
+    # normalize each channel to 0-1 independently and return as base64 list
     fmap = fmap_tensor[0]  # [C, H, W]
-    n = min(n, fmap.shape[0])
+    total_channels = fmap.shape[0]
+    n = min(n, total_channels)
     result = []
     for i in range(n):
         ch = fmap[i].numpy()
@@ -97,11 +96,11 @@ def extract_feature_grid(fmap_tensor, n=8, size=80):
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         result.append(base64.b64encode(buf.getvalue()).decode())
-    return result
+    return result, total_channels
 
 
 def uncertainty_to_heatmap(std_norm):
-    # blue = certain, red = uncertain, green = middle
+    # blue = certain, red = uncertain
     r = std_norm
     g = 1 - np.abs(std_norm * 2 - 1)
     b = 1 - std_norm
@@ -116,9 +115,9 @@ def run_colorization(net_G, image_bytes, uncertainty):
     rgb_np = np.array(pil_img).astype(np.float64) / 255.0
     lab = skcolor.rgb2lab(rgb_np).astype(np.float32)
 
-    L_raw = lab[:, :, 0]                       # luminance, range 0-100
-    L_norm = (L_raw / 50.0) - 1.0              # normalize to -1..1 like during training
-    L_tensor = torch.tensor(L_norm)[None, None]  # [1, 1, H, W]
+    L_raw  = lab[:, :, 0]
+    L_norm = (L_raw / 50.0) - 1.0
+    L_tensor = torch.tensor(L_norm)[None, None]
 
     if uncertainty:
         ab_pred_tensor, log_var_tensor = net_G(L_tensor)
@@ -126,12 +125,10 @@ def run_colorization(net_G, image_bytes, uncertainty):
         ab_pred_tensor = net_G(L_tensor)
         log_var_tensor = None
 
-    # convert predicted ab back to RGB
-    ab_pred = ab_pred_tensor[0].permute(1, 2, 0).numpy() * 110.0  # denormalize
+    ab_pred  = ab_pred_tensor[0].permute(1, 2, 0).numpy() * 110.0
     lab_pred = np.concatenate([L_raw[:, :, None], ab_pred], axis=-1)
     rgb_pred = np.clip(skcolor.lab2rgb(lab_pred), 0, 1)
 
-    # normalize ab channels to 0-1 just for display purposes
     a_display = (ab_pred[:, :, 0] / 127.0 + 1) / 2
     b_display = (ab_pred[:, :, 1] / 127.0 + 1) / 2
     L_display = L_raw / 100.0
@@ -144,25 +141,37 @@ def run_colorization(net_G, image_bytes, uncertainty):
         std_norm = (std - mn) / (mx - mn + 1e-8)
         heatmap = uncertainty_to_heatmap(std_norm)
         uncertainty_heatmap_b64 = array_to_b64(heatmap.astype(np.float32))
-        # blend uncertainty heatmap over the grayscale input
         L_rgb = np.stack([L_display, L_display, L_display], axis=-1)
         overlay = np.clip(0.55 * L_rgb + 0.45 * heatmap, 0, 1)
         uncertainty_overlay_b64 = array_to_b64(overlay.astype(np.float32))
 
-    # feature maps for each encoder level with a short description for the UI
+    # metadata for each layer — label shown in the diagram block
     fmap_meta = {
-        "layer1": {"label": "Group 1  —  64 channels  128×128", "desc": "Low-level edges and textures"},
-        "layer2": {"label": "Group 2  —  128 channels  64×64",  "desc": "Shapes and local structure"},
-        "layer3": {"label": "Group 3  —  256 channels  32×32",  "desc": "Object parts and semantic regions"},
-        "layer4": {"label": "Group 4  —  512 channels  16×16",  "desc": "High-level semantics — what the network 'knows' about the scene"},
+        "enc1":       {"label": "Encoder 1",   "desc": "Low-level edges and textures",                      "ch_hint": "64",  "sz_hint": "128×128"},
+        "enc2":       {"label": "Encoder 2",   "desc": "Shapes and local structure",                         "ch_hint": "128", "sz_hint": "64×64"},
+        "enc3":       {"label": "Encoder 3",   "desc": "Object parts and semantic regions",                  "ch_hint": "256", "sz_hint": "32×32"},
+        "enc4":       {"label": "Encoder 4",   "desc": "High-level semantics — scene understanding",         "ch_hint": "512", "sz_hint": "16×16"},
+        "bottleneck": {"label": "Bottleneck",  "desc": "Most compressed representation — full scene context","ch_hint": "512", "sz_hint": "8×8"},
+        "dec4":       {"label": "Decoder 4",   "desc": "Begins recovering spatial detail from bottleneck",   "ch_hint": "512", "sz_hint": "16×16"},
+        "dec3":       {"label": "Decoder 3",   "desc": "Recovering object-level color regions",              "ch_hint": "256", "sz_hint": "32×32"},
+        "dec2":       {"label": "Decoder 2",   "desc": "Local color structure, guided by skip features",     "ch_hint": "128", "sz_hint": "64×64"},
+        "dec1":       {"label": "Decoder 1",   "desc": "Full-resolution color prediction — texture detail",  "ch_hint": "64",  "sz_hint": "128×128"},
     }
+
     feature_maps_out = {}
     for key, meta in fmap_meta.items():
         if key in _feature_maps:
+            tensor = _feature_maps[key]
+            channels, total = extract_feature_channels(tensor, n=16, size=72)
+            _, C, H, W = tensor.shape
             feature_maps_out[key] = {
-                "channels": extract_feature_grid(_feature_maps[key], n=8, size=80),
-                "label": meta["label"],
-                "desc": meta["desc"],
+                "channels":    channels,
+                "total_ch":    total,
+                "spatial":     f"{H}×{W}",
+                "label":       meta["label"],
+                "desc":        meta["desc"],
+                "ch_hint":     meta["ch_hint"],
+                "sz_hint":     meta["sz_hint"],
             }
 
     return {

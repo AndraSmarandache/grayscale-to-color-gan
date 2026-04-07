@@ -85,19 +85,125 @@
         </div>
       </section>
 
-      <!-- step 2: encoder feature maps -->
-      <section class="result-section">
-        <h2>Step 2 — What the encoder sees</h2>
+      <!-- step 2: interactive U-Net diagram -->
+      <section class="result-section" id="unet-section">
+        <h2>Step 2 — Inside the network</h2>
         <p class="section-desc">
-          At each stage the ResNet-18 encoder compresses the image spatially while extracting increasingly abstract patterns.
-          Each small image below is one channel of the feature map at that stage — a learned detector responding to something in the input.
-          Early layers fire on edges; later layers respond to semantic concepts like "sky" or "face."
+          Click any block to explore its feature maps — what that layer "sees".
+          Click the arrows between blocks to understand each operation.
         </p>
-        <div id="fmap-container" class="fmap-container"></div>
+
+        <div id="unet-diagram" class="unet-diagram">
+          <!-- SVG drawn by JS for arrows and skip connections -->
+          <svg id="unet-svg" class="unet-svg"></svg>
+
+          <!-- top row: input / output thumbnails -->
+          <div class="unet-top-row">
+            <div class="ublock ublock-io" id="ub-input">
+              <img id="unet-thumb-input" class="ublock-thumb" />
+              <span class="ublock-label">Input</span>
+              <span class="ublock-sub">L · 256×256</span>
+            </div>
+            <div class="ublock ublock-io" id="ub-output">
+              <img id="unet-thumb-output" class="ublock-thumb" />
+              <span class="ublock-label">Output ab</span>
+              <span class="ublock-sub">2 ch · 256×256</span>
+            </div>
+          </div>
+
+          <!-- encoder | spacer | decoder -->
+          <div class="unet-main">
+            <div class="unet-enc-col">
+              <div class="ublock ublock-enc" id="ub-enc1" data-key="enc1">
+                <span class="ublock-label">Encoder 1</span>
+                <span class="ublock-sub">64 ch · 128×128</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-enc" id="ub-enc2" data-key="enc2">
+                <span class="ublock-label">Encoder 2</span>
+                <span class="ublock-sub">128 ch · 64×64</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-enc" id="ub-enc3" data-key="enc3">
+                <span class="ublock-label">Encoder 3</span>
+                <span class="ublock-sub">256 ch · 32×32</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-enc" id="ub-enc4" data-key="enc4">
+                <span class="ublock-label">Encoder 4</span>
+                <span class="ublock-sub">512 ch · 16×16</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+            </div>
+
+            <!-- center spacer — arrows are drawn here by JS via absolute SVG -->
+            <div class="unet-center-col" id="unet-center-col"></div>
+
+            <div class="unet-dec-col">
+              <div class="ublock ublock-dec" id="ub-dec1" data-key="dec1">
+                <span class="ublock-label">Decoder 1</span>
+                <span class="ublock-sub">64 ch · 128×128</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-dec" id="ub-dec2" data-key="dec2">
+                <span class="ublock-label">Decoder 2</span>
+                <span class="ublock-sub">128 ch · 64×64</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-dec" id="ub-dec3" data-key="dec3">
+                <span class="ublock-label">Decoder 3</span>
+                <span class="ublock-sub">256 ch · 32×32</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-dec" id="ub-dec4" data-key="dec4">
+                <span class="ublock-label">Decoder 4</span>
+                <span class="ublock-sub">512 ch · 16×16</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- bottleneck at bottom center -->
+          <div class="unet-bot-row">
+            <div class="ublock ublock-bottleneck" id="ub-bottleneck" data-key="bottleneck">
+              <span class="ublock-label">Bottleneck</span>
+              <span class="ublock-sub">512 ch · 8×8</span>
+              <span class="ublock-cta">tap · feature maps</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- operation tooltip panel -->
+        <div id="info-panel" class="info-panel hidden">
+          <div class="info-panel-inner">
+            <button id="info-close" class="info-close">×</button>
+            <div id="info-title" class="info-title"></div>
+            <div id="info-visual" class="info-visual"></div>
+            <div id="info-desc"  class="info-desc"></div>
+          </div>
+        </div>
+
+        <!-- feature map slide-in panel -->
+        <div id="fmap-panel" class="fmap-panel hidden">
+          <div class="fmap-panel-header">
+            <button id="fmap-back" class="fmap-back">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+              Back
+            </button>
+            <div class="fmap-panel-titles">
+              <div id="fmap-title" class="fmap-panel-title"></div>
+              <div id="fmap-desc"  class="fmap-panel-desc"></div>
+            </div>
+            <div id="fmap-stats" class="fmap-stats"></div>
+          </div>
+          <div id="fmap-panel-grid" class="fmap-panel-grid"></div>
+        </div>
       </section>
 
       <!-- step 3: uncertainty (shown only if model has uncertainty head) -->
-      <section class="result-section" id="uncertainty-section">
+      <section class="result-section hidden" id="uncertainty-section">
         <h2>Step 3 — Where is the model uncertain?</h2>
         <p class="section-desc">
           The model predicts not just a color but also its confidence in that prediction.
@@ -138,6 +244,14 @@
     <p>Bachelor thesis — Faculty of Automation, Computers and Electronics, University of Craiova</p>
     <p>GAN-based grayscale image colorization with Spatial Color Affinity and No Grey losses</p>
   </footer>
+
+  <!-- lightbox with prev/next -->
+  <div id="lightbox" class="lightbox hidden">
+    <button id="lb-prev" class="lb-nav">&#8592;</button>
+    <img id="lightbox-img" />
+    <button id="lb-next" class="lb-nav">&#8594;</button>
+    <span id="lb-counter" class="lb-counter"></span>
+  </div>
 
   <script src="app.js"></script>
 </body>
