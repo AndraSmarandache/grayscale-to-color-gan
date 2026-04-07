@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Colorization Explorer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="aurora">
+    <div class="aurora-blob"></div>
+    <div class="aurora-blob"></div>
+    <div class="aurora-blob"></div>
+  </div>
+
+  <header>
+    <div class="header-inner">
+      <h1>Colorization Explorer</h1>
+      <p class="subtitle">An interactive look inside a GAN-based grayscale image colorization model</p>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- upload panel -->
+    <section class="upload-section">
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-inner">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <p>Drop an image here or <label for="file-input" class="file-label">browse</label></p>
+          <p class="hint">Works best with natural photos — landscapes, portraits, architecture</p>
+        </div>
+        <input type="file" id="file-input" accept="image/*" hidden />
+      </div>
+
+      <div id="preview-area" class="preview-area hidden">
+        <img id="preview-img" src="" alt="uploaded" />
+        <button id="colorize-btn" class="btn-primary">Colorize</button>
+        <button id="reset-btn" class="btn-secondary">Upload another</button>
+      </div>
+    </section>
+
+    <!-- spinner shown during inference -->
+    <div id="spinner" class="spinner hidden">
+      <div class="spinner-ring"></div>
+      <p>Running inference — this may take a few seconds on CPU…</p>
+    </div>
+
+    <!-- results — everything below is hidden until we get a response -->
+    <div id="results" class="hidden">
+
+      <!-- step 1: LAB decomposition -->
+      <section class="result-section">
+        <h2>Step 1 — LAB color space</h2>
+        <p class="section-desc">
+          The model works in LAB color space. L (luminance) is the grayscale input.
+          The model predicts only the a and b color channels, which are then combined with L to reconstruct the full color image.
+        </p>
+        <div class="lab-grid">
+          <div class="lab-card">
+            <img id="img-L" />
+            <span class="label">L channel (input)</span>
+            <span class="sublabel">Luminance — exactly what a grayscale image contains</span>
+          </div>
+          <div class="lab-card">
+            <img id="img-a" />
+            <span class="label">Predicted a channel</span>
+            <span class="sublabel">Green ↔ Red axis</span>
+          </div>
+          <div class="lab-card">
+            <img id="img-b" />
+            <span class="label">Predicted b channel</span>
+            <span class="sublabel">Blue ↔ Yellow axis</span>
+          </div>
+          <div class="lab-card highlight">
+            <img id="img-colorized" />
+            <span class="label">Final colorization</span>
+            <span class="sublabel">L + predicted ab → RGB</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- step 2: encoder feature maps -->
+      <section class="result-section">
+        <h2>Step 2 — What the encoder sees</h2>
+        <p class="section-desc">
+          At each stage the ResNet-18 encoder compresses the image spatially while extracting increasingly abstract patterns.
+          Each small image below is one channel of the feature map at that stage — a learned detector responding to something in the input.
+          Early layers fire on edges; later layers respond to semantic concepts like "sky" or "face."
+        </p>
+        <div id="fmap-container" class="fmap-container"></div>
+      </section>
+
+      <!-- step 3: uncertainty (shown only if model has uncertainty head) -->
+      <section class="result-section" id="uncertainty-section">
+        <h2>Step 3 — Where is the model uncertain?</h2>
+        <p class="section-desc">
+          The model predicts not just a color but also its confidence in that prediction.
+          <span style="color:#ef4444">Red</span> = high uncertainty (walls, metal, shadows — ambiguous colors).
+          <span style="color:#3b82f6">Blue</span> = high confidence (sky, grass, skin — colors the model has seen many times).
+        </p>
+        <div class="uncertainty-grid">
+          <div class="lab-card">
+            <img id="img-uncertainty-heat" />
+            <span class="label">Uncertainty heatmap</span>
+          </div>
+          <div class="lab-card">
+            <img id="img-uncertainty-overlay" />
+            <span class="label">Overlay on input</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- comparison -->
+      <section class="result-section">
+        <h2>Result</h2>
+        <div class="compare-grid">
+          <div class="lab-card">
+            <img id="img-original" />
+            <span class="label">Original (color reference)</span>
+          </div>
+          <div class="lab-card highlight">
+            <img id="img-result" />
+            <span class="label">Model colorization</span>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer>
+    <p>Bachelor thesis — Faculty of Automation, Computers and Electronics, University of Craiova</p>
+    <p>GAN-based grayscale image colorization with Spatial Color Affinity and No Grey losses</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
