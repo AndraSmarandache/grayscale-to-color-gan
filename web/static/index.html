@@ -23,6 +23,14 @@
 
   <main>
 
+    <!-- model selector bar -->
+    <div class="model-bar">
+      <span class="model-bar-label">Model</span>
+      <select id="model-select" class="model-select"></select>
+      <span id="model-badge" class="model-badge hidden">uncertainty</span>
+      <span id="model-status" class="model-status"></span>
+    </div>
+
     <!-- upload panel -->
     <section class="upload-section">
       <div id="drop-zone" class="drop-zone">
@@ -40,8 +48,11 @@
 
       <div id="preview-area" class="preview-area hidden">
         <img id="preview-img" src="" alt="uploaded" />
-        <button id="colorize-btn" class="btn-primary">Colorize</button>
-        <button id="reset-btn" class="btn-secondary">Upload another</button>
+        <div class="preview-actions">
+          <button id="colorize-btn" class="btn-primary">Colorize</button>
+          <button id="compare-btn" class="btn-secondary">Compare all models</button>
+          <button id="reset-btn" class="btn-secondary">Upload another</button>
+        </div>
       </div>
     </section>
 
@@ -237,6 +248,19 @@
         </div>
       </section>
 
+    </div>
+
+    <!-- compare all models panel (outside #results, always available after image upload) -->
+    <div id="compare-section" class="compare-section hidden">
+      <div class="compare-section-header">
+        <h2>Model comparison</h2>
+        <p class="section-desc">Same image colorized by every available model.</p>
+        <div id="compare-spinner" class="spinner hidden">
+          <div class="spinner-ring"></div>
+          <p>Running all models — this may take a while on CPU…</p>
+        </div>
+      </div>
+      <div id="compare-grid-all" class="compare-grid-all"></div>
     </div>
   </main>
 

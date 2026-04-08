@@ -287,7 +287,7 @@ h2 {
 
 .unet-main {
   display: grid;
-  grid-template-columns: 1fr 80px 1fr;
+  grid-template-columns: 1fr 160px 1fr;
   width: 100%;
   gap: 0;
 }
@@ -295,7 +295,7 @@ h2 {
 .unet-enc-col, .unet-dec-col {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 20px;
   padding: 0.5rem 0;
 }
 
@@ -444,59 +444,214 @@ h2 {
   padding: 0 1.2rem 1.4rem;
 }
 
-/* deck of cards — filter visualization */
+/* floating modal overlay for feature maps */
+.fmap-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  animation: fadeIn 0.18s ease;
+}
+
+.fmap-modal {
+  background: rgba(7, 11, 22, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  backdrop-filter: blur(24px);
+  width: min(92vw, 680px);
+  max-height: 88vh;
+  overflow: hidden;
+  animation: slideUp 0.22s ease;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.75);
+  display: flex;
+  flex-direction: column;
+}
+
+.fmap-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.3rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.fmap-modal-titles { flex: 1; min-width: 0; }
+.fmap-modal-title { font-size: 1rem; font-weight: 700; color: var(--accent2); }
+.fmap-modal-desc  { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+.fmap-modal-stats { font-size: 0.73rem; color: var(--muted); white-space: nowrap; }
+
+.fmap-modal-close {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+.fmap-modal-close:hover { color: var(--text); border-color: rgba(255,255,255,0.25); }
+
+.fmap-modal-body {
+  overflow-y: auto;
+  flex: 1;
+}
+.fmap-modal-body::-webkit-scrollbar { width: 4px; }
+.fmap-modal-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* model selector bar */
+.model-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(12px);
+  flex-wrap: wrap;
+}
+
+.model-bar-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.model-select {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.88rem;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.model-select:hover { border-color: rgba(255,255,255,0.18); }
+.model-select:focus { border-color: var(--accent); }
+.model-select option { background: #0d1120; }
+
+.model-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  background: rgba(34,211,238,0.12);
+  border: 1px solid rgba(34,211,238,0.3);
+  color: #22d3ee;
+  white-space: nowrap;
+}
+
+.model-status {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* compare all models section */
+.compare-section {
+  margin-top: 3rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--border);
+}
+
+.compare-section-header { margin-bottom: 1.5rem; }
+
+.compare-grid-all {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.compare-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  backdrop-filter: blur(10px);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.compare-card:hover {
+  border-color: rgba(255,255,255,0.14);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+}
+.compare-card img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #000;
+}
+.compare-card .label { font-size: 0.78rem; font-weight: 600; text-align: center; }
+.compare-card .sublabel { font-size: 0.68rem; color: var(--muted); text-align: center; }
+.compare-card.compare-original { border-color: rgba(255,255,255,0.15); }
+.compare-card .compare-error {
+  font-size: 0.72rem;
+  color: #f87171;
+  text-align: center;
+  padding: 0.5rem;
+}
+
+/* deck of cards visualization */
 .deck-scene {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 2.8rem 2rem 4.5rem;
-  min-height: 260px;
-  cursor: pointer;
+  padding: 3rem 2rem 5rem;
+  min-height: 300px;
+  cursor: crosshair;
+  user-select: none;
 }
 
 .deck {
   position: relative;
-  width: 108px;
-  height: 108px;
+  width: 120px;
+  height: 120px;
 }
 
 .deck-card {
   position: absolute;
   left: 0; top: 0;
-  width: 108px;
-  height: 108px;
+  width: 120px;
+  height: 120px;
   border-radius: 9px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   background: #0c0e18;
   cursor: pointer;
-  /* idle: isometric stack showing depth along Z */
-  transform: perspective(620px)
-             rotateY(-27deg)
-             rotateX(11deg)
-             translateX(calc((var(--i, 0) - 15) * 0.9px))
-             translateY(calc((15 - var(--i, 0)) * 0.9px))
-             translateZ(calc((var(--i, 0) - 15) * 6px));
-  transition: transform 0.44s cubic-bezier(0.34, 1.56, 0.64, 1)
-                        calc((15 - var(--i, 0)) * 20ms),
-              box-shadow 0.3s ease,
-              border-color 0.2s ease;
-  box-shadow: 2px 4px 12px rgba(0, 0, 0, 0.6);
-}
-
-/* hover on deck: fan cards out from the isometric angle */
-.deck:hover .deck-card {
-  transform: perspective(620px)
-             rotateY(-9deg)
-             rotateX(3deg)
-             translateX(calc((var(--i, 0) - 7.5) * 50px))
-             translateY(0)
-             translateZ(0);
+  /* transform is computed and set by JS on every mouse move */
+  transition: box-shadow 0.25s ease, border-color 0.2s ease;
+  box-shadow: 2px 4px 14px rgba(0, 0, 0, 0.65);
 }
 
 .deck-card:hover {
   border-color: var(--accent);
-  box-shadow: 0 0 18px rgba(79, 142, 247, 0.55);
+  box-shadow: 0 0 20px rgba(79, 142, 247, 0.6);
   z-index: 100;
 }
 
@@ -508,12 +663,13 @@ h2 {
 }
 
 .deck-hint {
-  margin-top: 1.6rem;
+  margin-top: 2rem;
   font-size: 0.72rem;
   color: var(--muted);
-  opacity: 0.65;
+  opacity: 0.6;
   text-align: center;
   pointer-events: none;
+  line-height: 1.7;
 }
 
 /* lightbox */
