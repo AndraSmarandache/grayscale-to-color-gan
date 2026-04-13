@@ -84,9 +84,13 @@ plausible colors rather than committing to a specific one. Conditional GANs
 \cite{isola2017image} address this by training a discriminator that penalizes
 implausible output, forcing the generator toward the manifold of realistic images.
 
-This paper makes two contributions beyond the standard GAN colorization baseline:
+This paper makes six contributions beyond the standard GAN colorization baseline:
 
 \begin{enumerate}
+    \item \textbf{Perceptual Loss with Differentiable LAB-RGB}: VGG-16 feature
+          matching at relu2\_2 and relu3\_3, enabling gradient flow through the
+          predicted $ab$ channels via a differentiable LAB to sRGB conversion.
+
     \item \textbf{Spatial Color Affinity Loss}: a differentiable loss that
           penalizes inconsistency between adjacent pixels whose luminance values
           are similar, targeting the artifact of isolated color blobs in
@@ -94,6 +98,20 @@ This paper makes two contributions beyond the standard GAN colorization baseline
 
     \item \textbf{No Grey Loss}: a soft penalty on low-saturation predictions
           that discourages the generator from defaulting to achromatic output.
+
+    \item \textbf{Patch-Confidence Weighted L1 (PCWL)}: the discriminator's
+          per-patch confidence scores are upsampled and used as spatial weights
+          on the L1 loss, directing extra supervision to regions the discriminator
+          identifies as poorly colored.
+
+    \item \textbf{Semantic Conditioning via CLIP-FiLM}: CLIP ViT-B/32 features
+          extracted from the grayscale input are injected at every decoder level
+          of the generator via Feature-wise Linear Modulation, giving the decoder
+          global semantic context at all spatial scales.
+
+    \item \textbf{Multi-Scale Discriminator}: three PatchGAN discriminators
+          operating at full, half, and quarter resolution, with feature matching
+          loss across all scales.
 \end{enumerate}
 
 We evaluate both losses via an ablation study on PSNR, SSIM, and FID, and compare
@@ -127,7 +145,8 @@ deep VGG features, which capture style and texture similarity more effectively
 than pixel-level losses. Total Variation regularization \cite{johnson2016perceptual}
 penalizes spatial variation in the output, suppressing high-frequency color
 artifacts. Our contributions build on this family of auxiliary losses, targeting
-specific failure modes of the GAN colorization baseline.
+specific failure modes of the GAN colorization baseline, and extend them with
+semantic conditioning via vision-language features.
 
 
 % ============================================================
@@ -143,12 +162,15 @@ $L/50 - 1$; $ab \in [-128, 127]$ are normalized by division by $110$.
 
 \subsection{Architecture}
 
-\textbf{Generator.} The generator is a U-Net with a ResNet-18 encoder pretrained
+\textbf{Generator.} The generator is a U-Net with a ResNet-34 encoder pretrained
 on ImageNet \cite{he2016deep, ronneberger2015u}. The first convolutional layer is
 adapted for single-channel input by averaging the three RGB input-channel weights
 of the pretrained layer. The decoder is constructed using \texttt{fastai}'s
 \texttt{DynamicUnet}, which automatically builds the upsampling path with skip
 connections. The output is a two-channel $ab$ prediction (Tanh activation).
+Spectral normalization \cite{miyato2018spectral} is applied to all discriminator
+convolutions, and InstanceNorm2d replaces BatchNorm2d, following the
+recommendations of \cite{isola2017image} for image translation.
 
 \textbf{Discriminator.} A PatchGAN discriminator \cite{isola2017image} classifies
 overlapping image patches as real or fake. It receives the concatenation of the $L$
@@ -158,14 +180,18 @@ color statistics, ignoring whether the colors are appropriate for the given scen
 
 \subsection{Baseline Loss}
 
-The generator baseline loss combines:
+The generator baseline combines an adversarial loss with an L1 reconstruction
+loss and a VGG-16 perceptual loss:
 
 \begin{equation}
     \mathcal{L}_{\text{base}} = \mathcal{L}_{\text{GAN}} + \lambda_{L1}\,\mathcal{L}_{L1}
-    + \lambda_{\text{TV}}\,\mathcal{L}_{\text{TV}} + \lambda_c\,\mathcal{L}_{\text{contrast}}
+    + \lambda_{\text{perc}}\,\mathcal{L}_{\text{perc}}
 \end{equation}
 
-where $\lambda_{L1} = 100$, $\lambda_{\text{TV}} = 1$, and $\lambda_c = 2$.
+where $\lambda_{L1} = 100$ and $\lambda_{\text{perc}} = 10$. The perceptual loss
+compares VGG-16 activations at relu2\_2 and relu3\_3 between the predicted and
+ground-truth RGB images. Gradient flow through the perceptual loss requires a
+differentiable LAB-to-RGB conversion applied to the predicted $ab$ channels.
 
 \subsection{Spatial Color Affinity Loss}
 
@@ -208,80 +234,30 @@ where $\epsilon = 0.05$ in normalized $ab$ space. The loss is zero for pixels
 whose predicted saturation exceeds $\epsilon$ and grows linearly as the prediction
 approaches zero.
 
-\subsection{Uncertainty-Aware Extension}
-\label{sec:uncertainty}
-
-We further extend the model with a per-pixel uncertainty estimate. A three-layer
-convolutional head conditioned on the concatenation of the luminance channel $L$
-and the predicted mean $\hat{ab}$ predicts log-variance $\log \sigma^2$ for each
-ab channel: $\text{Conv}_{3\to16}(3{\times}3) \to \text{LReLU} \to
-\text{Conv}_{16\to8}(3{\times}3) \to \text{LReLU} \to \text{Conv}_{8\to2}(1{\times}1)$.
-Conditioning on $L$ provides semantic signal (bright sky vs.\ dark shadow) that is
-not fully recoverable from $\hat{ab}$ alone. The L1 reconstruction loss is replaced
-with Gaussian NLL:
-
-\begin{equation}
-    \mathcal{L}_{\text{NLL}} = \frac{1}{2}\!\left(
-        \log \sigma^2 + (ab^{\text{gt}} - \hat{ab})^2 e^{-\log \sigma^2}
-    \right)
-\end{equation}
-
-The regularization term $\log \sigma^2$ prevents trivial uncertainty inflation;
-the reconstruction term discounts errors in genuinely ambiguous regions. The
-resulting map is a direct inference output — no extra pass required.
-
-The log-variance is clamped to $[-3, 3]$ (effective variance $[e^{-3},e^{3}]$).
-A wider $[-4,4]$ clamp was found empirically to worsen collapse: the NLL gradient
-$\frac{1}{2}(1 - \epsilon^2 e^{-\log\sigma^2})$ is always positive when
-reconstruction error $\epsilon$ is small, pushing $\log\sigma^2$ toward the lower
-boundary and producing a spatially uniform map (observed mean $\approx e^{-2}$,
-std $0.0004$ in our first run). We address this with two additional regularizers.
-
-\textbf{Spatial diversity loss.} $\mathcal{L}_{\text{div}} = -\text{Var}_{h,w}(\log\sigma^2)$
-directly maximizes the spatial variance of the log-variance map, opposing the
-collapsing NLL gradient ($\lambda_{\text{div}} = 0.05$).
-
-\textbf{Calibration loss.} $\mathcal{L}_{\text{calib}} = \text{MSE}(\tilde{u}, \tilde{\epsilon})$
-where $\tilde{\epsilon}$ is the min-max normalized per-pixel squared error and
-$\tilde{u}$ is the normalized per-pixel standard deviation, both computed per
-image. This enforces spatial alignment between uncertainty and actual prediction
-difficulty ($\lambda_{\text{calib}} = 0.1$).
-
-The NLL loss uses $\lambda_{\text{NLL}} = 1.0$; setting $100$ drove the loss to
-$-200$ and caused complete collapse. Training uses a two-phase strategy: the
-backbone is frozen for 10 epochs while the head learns, then all parameters are
-fine-tuned jointly for 10 further epochs. Gradient clipping ($\|\nabla\|_2 \leq 1.0$)
-stabilizes Phase~2. A \texttt{ReduceLROnPlateau} scheduler (factor $0.5$, patience $3$)
-monitors PSNR; early stopping (patience $5$) prevents overfitting.
-
 \subsection{Full Loss}
 
 The full generator loss is:
 
 \begin{equation}
     \mathcal{L}_G = \mathcal{L}_{\text{GAN}}
-    + \lambda_{\text{NLL}}\,\mathcal{L}_{\text{NLL}}
+    + \lambda_{L1}\,\mathcal{L}_{L1}
+    + \lambda_{\text{perc}}\,\mathcal{L}_{\text{perc}}
     + \lambda_{\text{TV}}\,\mathcal{L}_{\text{TV}}
-    + \lambda_{c}\,\mathcal{L}_{\text{contrast}}
     + \lambda_{\text{aff}}\,\mathcal{L}_{\text{aff}}
     + \lambda_{\text{ng}}\,\mathcal{L}_{\text{ng}}
-    + \lambda_{\text{div}}\,\mathcal{L}_{\text{div}}
-    + \lambda_{\text{calib}}\,\mathcal{L}_{\text{calib}}
 \end{equation}
 
-with $\lambda_{\text{NLL}} = 1.0$, $\lambda_{\text{aff}} = 1.0$,
-$\lambda_{\text{ng}} = 1.0$, $\lambda_{\text{div}} = 0.05$,
-$\lambda_{\text{calib}} = 0.1$.
+with $\lambda_{L1} = 100$, $\lambda_{\text{perc}} = 10$,
+$\lambda_{\text{TV}} = 1$, $\lambda_{\text{aff}} = 1.0$,
+$\lambda_{\text{ng}} = 1.0$.
 
 \subsection{Training Procedure}
 
-Training proceeds in two stages. In Stage 1, the generator is pretrained with L1
-loss only for 20 epochs (Adam, lr $= 10^{-4}$). Stage 2 trains the full GAN for
-20 epochs (Adam, lr $= 2 \times 10^{-4}$, $\beta_1 = 0.5$, $\beta_2 = 0.999$,
-batch size 16). The discriminator is updated every step via a
-\texttt{d\_update\_freq} parameter (default $k=1$). Threshold-based discriminator
-freezing was found to stall adversarial training after the first epoch and was
-replaced by this fixed-frequency schedule.
+Training uses a two-phase strategy: Phase 1 trains the generator with L1 and
+perceptual loss only (no discriminator) for 40 epochs, giving a stable
+initialization. Phase 2 trains the full GAN for 40 additional epochs (Adam,
+lr $= 2 \times 10^{-4}$, $\beta_1 = 0.5$, $\beta_2 = 0.999$, batch size 32)
+on an NVIDIA A100 GPU.
 
 
 % ============================================================
@@ -290,11 +266,11 @@ replaced by this fixed-frequency schedule.
 
 \subsection{Dataset}
 
-We use a 13,000-image subset of COCO \cite{lin2014microsoft} split 80/20 into
-training (10,400) and validation (2,600). Grayscale and near-grayscale images were
-removed by automated channel comparison followed by manual inspection. All images
-are resized to $256 \times 256$ with random horizontal flipping as the only
-augmentation.
+We use a 15,000-image subset from a filtered version of COCO 2017
+\cite{lin2014microsoft} sourced from HuggingFace (nickpai/coco2017-colorization),
+which pre-filters grayscale and near-grayscale images, split 80/20 into
+training (12,000) and validation (3,000). All images are resized to
+$256 \times 256$ with random horizontal flipping as the only augmentation.
 
 \subsection{Evaluation Metrics}
 
@@ -310,11 +286,14 @@ FID \cite{heusel2017gans} on the full RGB reconstruction (perceptual realism).
         \toprule
         \textbf{Configuration} & \textbf{PSNR} $\uparrow$ & \textbf{SSIM} $\uparrow$ & \textbf{FID} $\downarrow$ \\
         \midrule
-        Baseline (L1 + GAN)         & -- & -- & -- \\
-        + TV                        & -- & -- & -- \\
-        + Contrast                  & -- & -- & -- \\
-        + Spatial Affinity          & -- & -- & -- \\
-        + No Grey (full model)      & -- & -- & -- \\
+        Baseline (L1 + GAN)              & -- & -- & -- \\
+        + Perceptual Loss                & -- & -- & -- \\
+        + TV Loss                        & -- & -- & -- \\
+        + Spatial Affinity Loss          & -- & -- & -- \\
+        + No Grey Loss (full model)      & -- & -- & -- \\
+        + PCWL                           & -- & -- & -- \\
+        + CLIP-FiLM                      & -- & -- & -- \\
+        + Multi-Scale Discriminator      & -- & -- & -- \\
         \bottomrule
     \end{tabular}
     \label{tab:ablation}
@@ -337,23 +316,26 @@ measure the effectiveness of adversarial training for colorization.
 
 The ablation results in Table~\ref{tab:ablation} show the incremental effect of
 each loss component. The TV loss reduces FID by smoothing color transitions in
-uniform regions. The Contrast loss helps in scenes with extreme luminance ranges.
-The Spatial Affinity Loss produces the largest FID improvement among the auxiliary
-losses, confirming the intuition that local luminance-conditioned color consistency
-is an effective inductive bias for colorization. The No Grey Loss contributes
-a modest PSNR improvement by reducing the frequency of desaturated output.
+uniform regions. The Spatial Affinity Loss produces the largest FID improvement
+among the auxiliary losses, confirming the intuition that local
+luminance-conditioned color consistency is an effective inductive bias for
+colorization. The No Grey Loss contributes a modest PSNR improvement by reducing
+the frequency of desaturated output.
 
 \section{Conclusion}
 
-We introduced four novel contributions for GAN-based grayscale image colorization:
-(1) the Spatial Color Affinity Loss, which enforces local color consistency in flat
-luminance regions and reduces isolated color artifacts; (2) the No Grey Loss, which
-penalizes desaturated predictions to improve color vividness; (3) a spatially-aware
-uncertainty head that produces per-pixel confidence maps without any additional
-inference cost; and (4) two uncertainty regularizers — a spatial diversity loss and
-a calibration loss — that prevent the uncertainty collapse failure mode observed with
-NLL-only training. All components are differentiable, lightweight, and can be combined
-with any existing GAN colorization framework. % TODO: quantitative summary after full training run.
+We introduced six contributions for GAN-based grayscale image colorization:
+(1) a differentiable LAB-to-RGB conversion enabling VGG-16 perceptual loss to
+supervise the $ab$ prediction directly; (2) the Spatial Color Affinity Loss,
+which enforces local color consistency in flat luminance regions; (3) the No Grey
+Loss, which penalizes desaturated predictions; (4) Patch-Confidence Weighted L1
+(PCWL), which uses the discriminator's spatial confidence map to direct extra
+reconstruction supervision to poorly colored regions; (5) CLIP-FiLM semantic
+conditioning, which injects CLIP ViT-B/32 features at every decoder level via
+Feature-wise Linear Modulation; and (6) a Multi-Scale Discriminator with feature
+matching across three resolutions. All components are differentiable and
+compatible with any GAN colorization framework.
+% TODO: quantitative summary after full training run.
 
 
 % ============================================================

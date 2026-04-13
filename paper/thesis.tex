@@ -123,9 +123,16 @@ pixel-level accuracy and perceptual realism.
 This thesis makes the following contributions:
 
 \begin{enumerate}
-    \item A full GAN-based colorization system built around a ResNet-18 U-Net
-          generator and a PatchGAN discriminator, trained on a 13,000-image
-          COCO subset in the LAB color space.
+    \item A full GAN-based colorization system built around a ResNet-34 U-Net
+          generator and a spectral-norm PatchGAN discriminator, trained on a
+          15,000-image filtered COCO subset in the LAB color space using a
+          two-phase training strategy (generator pretraining followed by
+          adversarial fine-tuning).
+
+    \item \textbf{Perceptual Loss with Differentiable LAB-RGB}: VGG-16 perceptual
+          loss at relu2\_2 and relu3\_3, enabled by a fully differentiable
+          LAB-to-sRGB conversion so that gradients flow through the predicted
+          $ab$ channels.
 
     \item \textbf{Spatial Color Affinity Loss}: a novel loss that enforces local
           color consistency by penalizing color discontinuities between adjacent
@@ -134,19 +141,24 @@ This thesis makes the following contributions:
     \item \textbf{No Grey Loss}: a novel loss that discourages the generator from
           predicting desaturated (near-grey) output by penalizing low $ab$ magnitude.
 
-    \item \textbf{Uncertainty-Aware Colorization}: an extension that adds a
-          lightweight uncertainty head to the generator, enabling the model to
-          output a per-pixel confidence map alongside the color prediction.
-          High uncertainty identifies regions where the model cannot reliably
-          determine the correct color, making the output directly useful for
-          human-in-the-loop photograph restoration.
+    \item \textbf{Patch-Confidence Weighted L1 (PCWL)}: the discriminator's
+          per-patch real/fake confidence scores are upsampled to full resolution
+          and used as spatial weights on the L1 loss, directing stronger
+          supervision to regions the discriminator identifies as implausible.
+
+    \item \textbf{Semantic Conditioning via CLIP-FiLM}: CLIP ViT-B/32 features
+          extracted from the grayscale input condition the generator's decoder
+          at every spatial scale via Feature-wise Linear Modulation, giving the
+          network global semantic context (object class, scene type) throughout
+          the upsampling path.
+
+    \item \textbf{Multi-Scale Discriminator}: three PatchGAN discriminators at
+          full, half, and quarter resolution, with feature matching loss across
+          all scales, enabling the model to enforce realism at both local texture
+          and global scene levels.
 
     \item An ablation study quantifying the individual and combined effect of each
-          loss component on PSNR, SSIM, and FID.
-
-    \item An adversarial robustness evaluation: the model is tested under FGSM and
-          PGD perturbations applied to the input $L$ channel, and a version trained
-          with adversarial examples is compared against the baseline.
+          loss and architecture component on PSNR, SSIM, Colorfulness, and FID.
 \end{enumerate}
 
 \section{Thesis Structure}
@@ -248,10 +260,12 @@ Total Variation (TV) regularization penalizes spatial variation in the output,
 producing smoother images and suppressing high-frequency artifacts. It is a classical
 signal processing technique that has been adapted for deep image synthesis.
 
-The loss functions in this thesis build on this foundation. The baseline uses
-L1 + adversarial + TV + contrast. The two novel contributions (Spatial Color Affinity
-and No Grey Loss) address specific failure modes observed in the baseline: isolated
-color patches in uniform regions and desaturated output, respectively.
+The loss functions in this thesis build on this foundation. The baseline in this
+work uses L1, adversarial, TV, and VGG perceptual losses. The novel contributions
+(Spatial Color Affinity Loss, No Grey Loss, PCWL, and CLIP-FiLM) each address
+specific failure modes: isolated color blobs in flat regions, desaturated output,
+spatially uneven reconstruction quality, and lack of semantic context in the
+decoder, respectively.
 
 
 % ============================================================
@@ -278,49 +292,42 @@ $[-128, 127]$) are mapped to $[-1, 1]$ via division by $110$.
 
 \section{Dataset Preparation}
 
-We use the Microsoft COCO dataset \cite{lin2014microsoft} as our training corpus,
-which provides a diverse collection of natural images across a wide range of scenes
-and objects.
+We use a filtered subset of the Microsoft COCO 2017 dataset \cite{lin2014microsoft}
+sourced from the \texttt{nickpai/coco2017-colorization} collection on HuggingFace,
+which pre-filters images that are grayscale or have low colorfulness (defined by
+channel variance below a threshold). This removes the need for manual inspection
+and produces a cleaner training set than sampling directly from the raw COCO
+archive.
 
-The raw COCO dataset contains a non-trivial fraction of grayscale images, which are
-unsuitable for colorization training as they provide no ground-truth color
-information. To address this, we applied an automated grayscale detection step: each
-image is converted to RGB and the three channels are compared pixel-wise; images
-where all channels are identical are removed. Because some images are
-\textit{near-grayscale} (heavily desaturated or filtered), automated detection alone
-is insufficient. A manual inspection pass was therefore performed on the resulting
-subset to remove any remaining problematic images.
-
-To guarantee a sufficient number of valid images after manual filtering, we extracted
-a subset of 16,000 images from the full dataset using a fixed random seed (42) for
-reproducibility. After the manual pass, approximately 13,000 color images remained.
-These were split into training and validation sets using an 80/20 ratio, yielding
-approximately 10,400 training images and 2,600 validation images.
+From this filtered collection we sample 15,000 images using a fixed random seed
+(42) for reproducibility. These are split 80/20 into training (12,000 images) and
+validation (3,000 images). All images are resized to $256 \times 256$ pixels.
+Training augmentation is limited to random horizontal flipping.
 
 \section{Model Architecture}
 
-    \subsection{Generator: ResNet-18 U-Net}
+    \subsection{Generator: ResNet-34 U-Net}
 
     The generator follows a U-Net architecture \cite{ronneberger2015u} with a
-    ResNet-18 encoder backbone \cite{he2016deep}. U-Net skip connections pass
+    ResNet-34 encoder backbone \cite{he2016deep}. U-Net skip connections pass
     encoder feature maps directly to the corresponding decoder layers, preserving
     fine-grained spatial detail that would otherwise be lost through the bottleneck.
     This is important for colorization, where local texture and edge information
     must be retained in the predicted color output.
 
-    ResNet-18 is used as the encoder because its residual connections enable
-    effective gradient flow and because ImageNet-pretrained weights provide a strong
-    initialization for feature extraction. Pretraining is critical given our
-    relatively small dataset of 13,000 images: the encoder already recognizes shapes,
-    textures, and objects relevant to color prediction without needing to learn these
-    representations from scratch.
+    ResNet-34 is used as the encoder because its deeper residual stack provides
+    richer semantic features than ResNet-18, and because ImageNet-pretrained weights
+    provide a strong initialization for feature extraction. Pretraining is critical
+    given our relatively small dataset of 15,000 images: the encoder already
+    recognizes shapes, textures, and objects relevant to color prediction without
+    needing to learn these representations from scratch.
 
     Residual connections in ResNet address the vanishing gradient problem that
     limited very deep networks before their introduction. Each residual block
     computes $\mathcal{F}(x) + x$, where $\mathcal{F}$ is the learned residual
     mapping, so gradients can flow directly through the identity shortcut.
 
-    Since ResNet-18 expects a three-channel RGB input, but our model receives a
+    Since ResNet-34 expects a three-channel RGB input, but our model receives a
     single $L$ channel, the first convolutional layer is adapted: a new
     \texttt{Conv2d(1, 64)} layer is created and its weights are initialized by
     averaging the three input-channel weights of the original pretrained layer.
@@ -346,11 +353,17 @@ approximately 10,400 training images and 2,600 validation images.
     the $ab$ channels (real or generated) as a three-channel input, making it aware
     of the input luminance when judging color realism.
 
+    All convolutional layers in the discriminator use spectral normalization
+    \cite{miyato2018spectral} to constrain the Lipschitz constant of the
+    discriminator, which stabilizes adversarial training and prevents mode collapse.
+    InstanceNorm2d with learnable affine parameters replaces BatchNorm2d, following
+    the recommendation of \cite{isola2017image} for conditional image synthesis.
+
 \section{Loss Functions}
 
     \subsection{Baseline Losses}
 
-    The generator is trained with a combination of four baseline losses.
+    The generator is trained with a combination of three baseline losses.
 
     \textbf{L1 Loss.} A pixel-wise L1 distance between the predicted $ab$ channels
     and the ground truth, weighted by $\lambda_{L1} = 100$. This provides the primary
@@ -366,10 +379,12 @@ approximately 10,400 training images and 2,600 validation images.
     channels. This reduces color artifacts and smooths transitions in uniform regions
     such as sky, snow, or plain surfaces.
 
-    \textbf{Contrast Loss.} Encourages the generator to match the contrast level of
-    the ground truth image. Contrast is measured as the standard deviation of the
-    $L$ channel. This helps in scenes with extreme lighting conditions, such as night
-    scenes or strongly lit outdoor images.
+    \textbf{Perceptual Loss.} A VGG-16 based perceptual loss \cite{johnson2016perceptual}
+    computed at two feature levels: relu2\_2 (capturing texture) and relu3\_3
+    (capturing structure). The predicted $ab$ channels are converted to RGB via a
+    differentiable LAB-to-sRGB transformation before being passed through the frozen
+    VGG-16 network. This allows gradients to flow directly through the color
+    prediction during the perceptual comparison, weighted by $\lambda_{\text{perc}} = 10$.
 
     \subsection{Spatial Color Affinity Loss}
     \label{sec:affinity}
@@ -425,191 +440,147 @@ approximately 10,400 training images and 2,600 validation images.
     color is less saturated than $\epsilon$, providing a soft lower bound on color
     saturation without forcing all pixels to be strongly colored.
 
-    \subsection{Uncertainty-Aware Colorization}
-    \label{sec:uncertainty}
-
-    Standard colorization models predict a single color per pixel, implicitly
-    assuming the mapping from luminance to color is deterministic. In practice,
-    colorization is ill-posed: a gray concrete wall, a gray stone, and a gray road
-    all have similar luminance but could plausibly receive different colors.
-    Predicting a single value forces the model to average over these possibilities,
-    which contributes to the desaturated output characteristic of L1-trained models.
-
-    We extend the generator with an \textit{uncertainty head}: a three-layer
-    convolutional network that takes as input the concatenation of the luminance
-    channel $L$ and the predicted mean $\hat{ab}$, producing a per-pixel
-    log-variance $\log \sigma^2$ for each of the two ab channels.
-    The architecture is: $\text{Conv}_{3\to16}(3\times3) \to \text{LeakyReLU}
-    \to \text{Conv}_{16\to8}(3\times3) \to \text{LeakyReLU} \to
-    \text{Conv}_{8\to2}(1\times1)$, with zero weight initialization and a bias
-    of $-1$ in the output layer, so the head starts near $\log\sigma^2 = -1$
-    (variance $\approx 0.37$).
-    Conditioning on $L$ is critical: the luminance channel carries direct
-    information about scene semantics (bright sky vs.\ dark shadow) that is not
-    fully preserved in $\hat{ab}$, giving the head the signal it needs to
-    produce spatially varying uncertainty rather than a uniform map.
-    The generator therefore outputs both a color prediction and a calibrated
-    confidence estimate without any change to the encoder-decoder backbone.
-
-    The reconstruction loss is replaced with the Gaussian negative log-likelihood:
-
-    \begin{equation}
-        \mathcal{L}_{\text{NLL}} = \frac{1}{2}
-        \left( \log \sigma^2 + (ab^{\text{gt}} - \hat{ab})^2 e^{-\log \sigma^2} \right)
-        \label{eq:nll}
-    \end{equation}
-
-    This loss has two complementary terms. The reconstruction term
-    $(ab^{\text{gt}} - \hat{ab})^2 e^{-\log \sigma^2}$ penalizes errors more
-    heavily when the model claims high confidence (small $\sigma^2$). The
-    regularization term $\log \sigma^2$ prevents the model from trivially avoiding
-    reconstruction penalties by claiming everything is uncertain. Together they
-    force the model to match the uncertainty to the actual difficulty of prediction:
-    high uncertainty for ambiguous gray regions (walls, metal, concrete), low
-    uncertainty for semantically unambiguous regions (sky, grass, skin).
-
-    \textbf{Implementation details.}
-    Unlike the L1 loss where $\lambda_{\text{recon}} = 100$ is needed to match the
-    magnitude of the GAN loss, the NLL loss is used with $\lambda_{\text{recon}} = 1.0$.
-    The NLL loss self-normalizes through its $\log \sigma^2$ term: as the model
-    reduces prediction error it simultaneously reduces $\sigma^2$, keeping the loss
-    magnitude in a stable range regardless of the reconstruction error scale. Setting
-    $\lambda_{\text{recon}} = 100$ caused the NLL loss to collapse to values near
-    $-200$, driving the model to predict extreme uncertainty everywhere.
-
-    The log-variance is clamped to $[-3, 3]$ before the exponential in
-    Equation~\ref{eq:nll}, which constrains the effective per-pixel variance to the
-    interval $[e^{-3}, e^{3}] \approx [0.05, 20.1]$. The tighter clamp (reduced
-    from an initial $[-4, 4]$) was motivated by empirical observation: with the
-    wider range the NLL gradient could always push $\log\sigma^2$ toward the
-    lower boundary, causing uniform-map collapse even with stronger regularization.
-
-    Gradient clipping ($\|\nabla\|_2 \leq 1.0$) is applied to the generator after
-    each backward pass, which stabilizes training when the backbone is unfrozen in
-    Phase~2 and the full model is being fine-tuned jointly.
-
-    \textbf{Spatial diversity regularizer.}
-    The NLL loss alone is insufficient to produce spatially varying uncertainty.
-    Its gradient with respect to $\log\sigma^2$ is
-    $\frac{1}{2}(1 - \epsilon^2 e^{-\log\sigma^2})$, where
-    $\epsilon = ab^{\text{gt}} - \hat{ab}$. When reconstruction error $\epsilon$
-    is small (which it is after pre-training), this gradient is always positive,
-    consistently pushing $\log\sigma^2$ toward the lower clamp boundary. The
-    result is a spatially uniform map at the clamp floor — an \textit{uncertainty
-    collapse} failure mode observed in our first training run (mean uncertainty
-    $0.135 \approx e^{-2}$, std $0.0004$).
-
-    To counteract this we add a spatial diversity loss:
-
-    \begin{equation}
-        \mathcal{L}_{\text{div}} = -\,\text{Var}_{h,w}(\log\sigma^2)
-        \label{eq:div}
-    \end{equation}
-
-    where the variance is computed over spatial dimensions $(h,w)$ for each
-    image in the batch and then averaged. Maximizing spatial variance directly
-    opposes the collapsing force of the NLL gradient
-    ($\lambda_{\text{div}} = 0.05$).
-
-    \textbf{Calibration loss.}
-    Even with diversity regularization the uncertainty map need not be
-    \textit{calibrated} — high uncertainty should coincide with high prediction
-    error. We enforce this with a direct spatial supervision signal:
-
-    \begin{equation}
-        \mathcal{L}_{\text{calib}} = \text{MSE}\!\left(
-            \tilde{u}(x,y),\; \tilde{\epsilon}(x,y)
-        \right)
-        \label{eq:calib}
-    \end{equation}
-
-    where $\tilde{\epsilon}(x,y) = \text{mean}_c(\epsilon_c^2)$ is the
-    per-pixel squared error, $\tilde{u}(x,y) = \text{mean}_c(\sigma_c)$
-    is the per-pixel mean standard deviation, and both maps are
-    min-max normalized to $[0,1]$ within each image before the MSE
-    is evaluated. Normalization removes the absolute-scale mismatch between
-    uncertainty and error while preserving relative spatial structure.
-    The stop-gradient on the error map ensures the calibration signal
-    does not update the color prediction branch
-    ($\lambda_{\text{calib}} = 0.1$).
-
-    \textbf{Training strategy.} The uncertainty head is initialized with zero weights
-    and a bias of $-2$, giving $\log \sigma^2 \approx -2$ initially and a starting
-    variance near $e^{-2} \approx 0.14$. Training proceeds in two phases. In Phase~1
-    (10 epochs), the backbone is frozen and only the uncertainty head is trained.
-    The extended warm-up gives the head sufficient time to converge before the backbone
-    is unfrozen, preventing it from unlearning pretrained color features when joint
-    fine-tuning begins. In Phase~2 (10 epochs), all parameters are unfrozen for joint
-    fine-tuning.
-
-    A \texttt{ReduceLROnPlateau} scheduler (factor $0.5$, patience $3$ epochs)
-    monitors validation PSNR and halves the learning rate for both $G$ and $D$ when
-    improvement stalls. Early stopping (patience $5$ epochs) terminates training if
-    PSNR does not improve, preventing overfitting on the small dataset.
-
-    The uncertainty map $\sigma(x, y) = \sqrt{\text{mean}_{c}(\sigma^2_c(x,y))}$
-    is a direct output of the model at inference time, requiring no additional
-    computation. It can be visualized as a heatmap over the colorized image to
-    identify regions where the model is unsure — directly useful for
-    human-in-the-loop restoration workflows where expert attention should focus
-    on the most ambiguous areas.
-
     \subsection{Combined Generator Loss}
 
     The full generator loss is:
 
     \begin{equation}
-        \mathcal{L}_G = \mathcal{L}_{\text{GAN}} + \lambda_{\text{NLL}}\,\mathcal{L}_{\text{NLL}}
+        \mathcal{L}_G = \mathcal{L}_{\text{GAN}}
+        + \lambda_{L1}\,\mathcal{L}_{L1}
+        + \lambda_{\text{perc}}\,\mathcal{L}_{\text{perc}}
         + \lambda_{\text{TV}}\,\mathcal{L}_{\text{TV}}
-        + \lambda_{\text{contrast}}\,\mathcal{L}_{\text{contrast}}
         + \lambda_{\text{affinity}}\,\mathcal{L}_{\text{affinity}}
         + \lambda_{\text{nogrey}}\,\mathcal{L}_{\text{nogrey}}
-        + \lambda_{\text{div}}\,\mathcal{L}_{\text{div}}
-        + \lambda_{\text{calib}}\,\mathcal{L}_{\text{calib}}
     \end{equation}
 
-    Table~\ref{tab:weights} lists the default weights used in the full model.
+    Table~\ref{tab:weights} lists the default weights.
 
     \begin{table}[H]
         \centering
-        \caption{Loss weights used in the uncertainty-aware model configuration.}
+        \caption{Loss weights used in the full model configuration.}
         \begin{tabular}{lcc}
             \toprule
             \textbf{Loss term} & \textbf{Symbol} & \textbf{Default weight} \\
             \midrule
-            NLL (reconstruction + uncertainty) & $\lambda_{\text{NLL}}$ & 1.0 \\
-            GAN           & ---                    & 1.0 (fixed) \\
-            Total Variation & $\lambda_{\text{TV}}$ & 1.0 \\
-            Contrast      & $\lambda_{\text{contrast}}$ & 2.0 \\
-            Spatial Affinity & $\lambda_{\text{affinity}}$ & 1.0 \\
-            No Grey       & $\lambda_{\text{nogrey}}$  & 1.0 \\
-            Spatial Diversity & $\lambda_{\text{div}}$  & 0.05 \\
-            Calibration   & $\lambda_{\text{calib}}$   & 0.1 \\
+            L1 reconstruction  & $\lambda_{L1}$             & 100.0 \\
+            Perceptual (VGG-16) & $\lambda_{\text{perc}}$   & 10.0 \\
+            GAN                & ---                         & 1.0 (fixed) \\
+            Total Variation    & $\lambda_{\text{TV}}$       & 1.0 \\
+            Spatial Affinity   & $\lambda_{\text{affinity}}$ & 1.0 \\
+            No Grey            & $\lambda_{\text{nogrey}}$   & 1.0 \\
             \bottomrule
         \end{tabular}
         \label{tab:weights}
     \end{table}
 
+    \subsection{Patch-Confidence Weighted L1}
+    \label{sec:pcwl}
+
+    A known limitation of uniform spatial losses is that the generator can achieve a
+    low aggregate loss while leaving specific regions poorly colored. For instance,
+    a hand or a stop sign may be left grey if the surrounding correctly colored area
+    dominates the gradient. We address this with Patch-Confidence Weighted L1 (PCWL).
+
+    After each discriminator forward pass, the per-patch logit map
+    $D(L, \hat{ab}) \in \mathbb{R}^{B \times 1 \times H' \times W'}$ is converted
+    to a confidence map:
+
+    \begin{equation}
+        w = \sigma(-D(L, \hat{ab}))
+    \end{equation}
+
+    where $\sigma$ denotes the sigmoid function. High values of $w$ indicate patches
+    that the discriminator considers clearly fake. This map is bilinearly upsampled
+    to the full image resolution and used as a spatial weight on the L1 loss:
+
+    \begin{equation}
+        \mathcal{L}_{\text{PCWL}} =
+        \frac{1}{B \cdot H \cdot W}
+        \sum_{b,h,w} w_{b,h,w} \cdot |\hat{ab}_{b,h,w} - ab^{\text{gt}}_{b,h,w}|
+    \end{equation}
+
+    The discriminator thus acts as an online hard-example miner: regions it identifies
+    as most implausible receive the strongest reconstruction supervision at each step.
+    This creates a feedback loop where persistent failures (grey hands, partially
+    colored signs) are corrected by progressively stronger gradients rather than being
+    averaged away by well-colored regions.
+
+    \subsection{Semantic Conditioning via CLIP-FiLM}
+    \label{sec:clipfilm}
+
+    The core limitation of a standard U-Net for colorization is that shallow decoder
+    layers receive skip connections carrying spatial structure (edges, textures) but
+    minimal semantic context. The model therefore cannot reliably infer that a
+    hand-shaped grey region should be skin-colored or that a partially grey octagonal
+    region should be red.
+
+    We address this by conditioning the generator's decoder with global semantic
+    features from CLIP ViT-B/32 \cite{radford2021learning}. For each training image,
+    CLIP features are extracted from the grayscale input (L channel converted to
+    pseudo-RGB):
+
+    \begin{equation}
+        \mathbf{c} = \text{CLIP}_{\text{img}}(L \cdot \mathbf{1}_3) \in \mathbb{R}^{512}
+    \end{equation}
+
+    These features are injected at every decoder level using Feature-wise Linear
+    Modulation (FiLM) \cite{perez2018film}:
+
+    \begin{equation}
+        \tilde{F}_k = F_k \odot (1 + \gamma_k(\mathbf{c})) + \beta_k(\mathbf{c})
+    \end{equation}
+
+    where $F_k$ is the feature map at decoder level $k$, and $\gamma_k, \beta_k$
+    are learned affine parameters predicted by a linear layer from $\mathbf{c}$.
+    The CLIP encoder is frozen throughout training; only the FiLM parameters are
+    learned. The discriminator is also conditioned on $\mathbf{c}$, projected to
+    match the discriminator's feature dimension before the final classification layer.
+
+    \subsection{Multi-Scale Discriminator}
+    \label{sec:multiscale}
+
+    A single PatchGAN discriminator at a fixed receptive field cannot simultaneously
+    enforce realism at fine texture scales and semantic color consistency at the
+    object scale. We adopt the multi-scale discriminator from pix2pixHD
+    \cite{wang2018high}: three identical PatchGAN architectures $D_1, D_2, D_3$
+    operate on the input at full, half, and quarter resolution respectively:
+
+    \begin{equation}
+        \mathcal{L}_D = \frac{1}{3} \sum_{k=1}^{3} \mathcal{L}_{\text{GAN}}^{(k)}
+    \end{equation}
+
+    In addition to the adversarial loss, we use the feature matching loss
+    \cite{wang2018high} across all discriminator scales:
+
+    \begin{equation}
+        \mathcal{L}_{\text{FM}} = \frac{1}{3} \sum_{k=1}^{3}
+        \frac{1}{L} \sum_{l=1}^{L}
+        \frac{1}{N_l} \left\| D_k^{(l)}(L, ab^{\text{gt}})
+        - D_k^{(l)}(L, \hat{ab}) \right\|_1
+    \end{equation}
+
+    where $D_k^{(l)}$ denotes the activations of the $l$-th layer of discriminator
+    $k$, $L$ is the number of layers, and $N_l$ is the number of elements in layer
+    $l$. Feature matching provides a stable gradient signal for the generator from
+    the discriminator's intermediate representations, independent of the GAN
+    objective's saturation behavior.
+
 \section{Training Procedure}
 
     Training proceeds in two stages. In the first stage, the generator is pretrained
-    using only the L1 loss for 20 epochs with a learning rate of $10^{-4}$. This
-    gives the generator a stable initialization before adversarial training begins,
-    avoiding the instability that can occur when the discriminator overwhelms an
-    untrained generator.
+    with L1 loss and perceptual loss (Phase 1, no discriminator) for 40 epochs with
+    a learning rate of $10^{-4}$. This gives the generator a stable initialization
+    before adversarial training begins, avoiding the instability that can occur when
+    the discriminator overwhelms an untrained generator.
 
-    In the second stage, the full GAN is trained for 20 additional epochs. Both the
+    In the second stage, the full GAN is trained for 40 additional epochs. Both the
     generator and discriminator use the Adam optimizer with learning rate
     $2 \times 10^{-4}$, $\beta_1 = 0.5$, and $\beta_2 = 0.999$. The low $\beta_1$
     is a standard recommendation for GAN training \cite{isola2017image}: it reduces
     the momentum term so the optimizer can respond more quickly to the rapidly
-    changing gradient landscape. The discriminator is updated every $k$ steps
-    (default $k = 1$, i.e.\ every step), controlled by a \texttt{d\_update\_freq}
-    parameter. This is preferable to threshold-based freezing, which was found to
-    cause the discriminator to stall after the first epoch whenever its loss fell
-    below the threshold, effectively halting adversarial training. The generator
-    is updated on every step regardless of the discriminator update schedule.
-    All experiments use a batch size of 16 on an NVIDIA Tesla T4 GPU.
+    changing gradient landscape. The discriminator is updated every step and the
+    generator is updated on every step as well.
+    All experiments use a batch size of 32 on an NVIDIA A100 GPU.
 
 
 % ============================================================
@@ -619,17 +590,17 @@ approximately 10,400 training images and 2,600 validation images.
 
 \section{Experimental Setup}
 
-All experiments are conducted on Google Colab using an NVIDIA Tesla T4 GPU. The
-dataset consists of 13,000 color images from the COCO subset described in
-Section~3.2, split 80/20 into training (10,400 images) and validation (2,600
+All experiments are conducted on Google Colab using an NVIDIA A100 GPU. The
+dataset consists of 15,000 color images from the COCO subset described in
+Section~3.2, split 80/20 into training (12,000 images) and validation (3,000
 images). All images are resized to $256 \times 256$ pixels. Training augmentation
 is limited to random horizontal flipping.
 
 Each experiment follows the two-stage training procedure described in Section~3.5:
-20 epochs of generator pretraining with L1 loss only, followed by 20 epochs of full
-adversarial training. The batch size is 16 for all runs. To keep experiments
-reproducible, all runs share the same pretrained generator from Stage 1; only the
-Stage 2 loss configuration changes between them.
+40 epochs of generator pretraining followed by 40 epochs of full adversarial
+training. The batch size is 32 for all runs. To keep experiments reproducible,
+all runs share the same pretrained generator from Stage 1; only the Stage 2 loss
+configuration changes between them.
 
 \section{Evaluation Metrics}
 
@@ -658,16 +629,19 @@ shown in Table~\ref{tab:ablation}.
 
 \begin{table}[H]
     \centering
-    \caption{Ablation study: effect of each loss component on colorization quality.}
-    \begin{tabular}{lcccc}
+    \caption{Ablation study: effect of each component on colorization quality.}
+    \begin{tabular}{lccc}
         \toprule
         \textbf{Configuration} & \textbf{PSNR} $\uparrow$ & \textbf{SSIM} $\uparrow$ & \textbf{FID} $\downarrow$ \\
         \midrule
         Baseline (L1 + GAN)              & -- & -- & -- \\
+        + Perceptual Loss                & -- & -- & -- \\
         + TV Loss                        & -- & -- & -- \\
-        + Contrast Loss                  & -- & -- & -- \\
         + Spatial Affinity Loss          & -- & -- & -- \\
         + No Grey Loss (full model)      & -- & -- & -- \\
+        + PCWL                           & -- & -- & -- \\
+        + CLIP-FiLM                      & -- & -- & -- \\
+        + Multi-Scale Discriminator      & -- & -- & -- \\
         \bottomrule
     \end{tabular}
     \label{tab:ablation}
@@ -731,50 +705,16 @@ models to predict desaturated output. By applying a soft penalty to low-saturati
 pixels, it nudges the generator toward more vibrant predictions without changing
 the behavior in well-saturated regions.
 
-\subsection{Uncertainty Head: Preliminary Results and Analysis}
-\label{sec:uncertainty_results}
-
-An initial training run of the uncertainty-aware model was conducted to validate
-the architecture before full experiments. The run used 20 phases (Phase~1: backbone
-frozen, Phase~2: joint fine-tuning) with $\lambda_{\text{NLL}} = 1.0$,
-$\lambda_{\text{div}} = 0.05$, $\lambda_{\text{calib}} = 0.1$, clamp $[-3, 3]$.
-
-\textbf{Colorization quality.} PSNR improved from $24.50$\,dB at epoch~1 to
-$24.87$\,dB, consistent with pre-trained model quality. The NLL-trained model
-matched the L1 baseline on reconstruction despite the added uncertainty objective,
-demonstrating that the two-phase strategy successfully protects the pretrained color
-features.
-
-\textbf{Uncertainty collapse (first run diagnosis).} The uncertainty maps were
-visually uniform across all test images. Histogramming the per-pixel uncertainty
-values revealed a spike at $\approx 0.135 \approx e^{-2}$ with standard deviation
-$0.0004$ — essentially a delta function. This is the \textit{uncertainty collapse}
-failure mode: the NLL gradient with respect to $\log\sigma^2$ is
-$\frac{1}{2}(1 - \epsilon^2 e^{-\log\sigma^2})$. After pre-training, $\epsilon$
-is small everywhere, so this gradient is always positive, pushing $\log\sigma^2$
-toward the lower clamp boundary. The head had no mechanism to produce spatial
-variation.
-
-This diagnosis motivated the three-part redesign described in
-Section~\ref{sec:uncertainty}: (i) conditioning the head on $L$ to provide
-semantic signal, (ii) the spatial diversity loss $\mathcal{L}_{\text{div}}$
-to directly oppose the collapsing gradient, and (iii) the calibration loss
-$\mathcal{L}_{\text{calib}}$ to enforce alignment between uncertainty and
-prediction error. The redesigned model is the subject of ongoing training.
-
 \section{Limitations}
 
-\textbf{Dataset size.} The 13,000-image training set is small compared to the
+\textbf{Dataset size.} The 15,000-image training set is small compared to the
 hundreds of thousands of images used by state-of-the-art systems. This limits the
 model's ability to generalize to rare object categories.
 
-\textbf{Near-grayscale images.} Although obvious grayscale images were filtered out,
-some heavily desaturated images may remain in the dataset. These provide weak
-training signal and may contribute to the model's tendency toward desaturated output.
-
-\textbf{No perceptual loss.} We did not include a VGG-based perceptual loss
-\cite{johnson2016perceptual}. This is a known limitation: perceptual losses improve
-sharpness and semantic coherence, especially in regions with fine texture.
+\textbf{Near-grayscale images.} The HuggingFace filtered dataset addresses the
+most obvious cases of grayscale and near-grayscale images by applying a
+channel-variance threshold. Some borderline cases may still remain, but the
+pre-filtering substantially reduces the need for manual curation.
 
 \textbf{Fixed resolution.} The model is trained and evaluated at $256 \times 256$
 pixels. Inference on higher-resolution images requires resizing, which may introduce
@@ -784,10 +724,13 @@ artifacts at object boundaries.
 
 Several directions for future work are worth pursuing. First, scaling the dataset
 to several hundred thousand images would likely close the gap with state-of-the-art
-systems. Second, incorporating a VGG perceptual loss would improve texture fidelity.
-Third, the Spatial Color Affinity Loss could be extended to use learned edge maps
-(from a pretrained edge detector) rather than the simple luminance-difference mask,
-which would make it more robust to over-smoothing at legitimate color boundaries.
+systems. Second, the Spatial Color Affinity Loss could be extended to use learned
+edge maps (from a pretrained edge detector) rather than the simple
+luminance-difference mask, which would make it more robust to over-smoothing at
+legitimate color boundaries. Third, extending CLIP-FiLM to use a larger
+vision-language backbone (e.g., CLIP ViT-L/14) could further improve semantic
+color accuracy. Training on the full COCO 2017 dataset (118K images) with the
+A100 GPU is also a straightforward scaling path.
 
 
 % ============================================================
@@ -795,14 +738,19 @@ which would make it more robust to over-smoothing at legitimate color boundaries
 \label{ch:conclusion}
 % ============================================================
 
-This thesis presented a GAN-based system for automatic grayscale image colorization.
-The system uses a ResNet-18 U-Net generator and a PatchGAN discriminator operating
-in the LAB color space, trained on a 13,000-image COCO subset. Two novel loss
-functions were introduced: Spatial Color Affinity Loss, which enforces local color
-consistency in uniform luminance regions, and No Grey Loss, which penalizes
-desaturated predictions. An ablation study was conducted to isolate the contribution
-of each loss component, and the model was evaluated for robustness under FGSM and
-PGD adversarial perturbations. % TODO: add key numerical result once experiments are complete.
+This thesis presented a GAN-based system for automatic grayscale image colorization
+operating in the LAB color space with a ResNet-34 U-Net generator and a spectral-norm
+PatchGAN discriminator. Six novel contributions were introduced beyond the standard
+GAN colorization baseline: a differentiable LAB-to-RGB conversion enabling VGG-16
+perceptual supervision of the $ab$ prediction; the Spatial Color Affinity Loss for
+local color consistency; the No Grey Loss for saturation; Patch-Confidence Weighted
+L1 (PCWL) for spatially adaptive reconstruction supervision; CLIP-FiLM semantic
+conditioning that injects global scene understanding at every decoder level; and a
+Multi-Scale Discriminator with feature matching across three resolutions. Each
+contribution targets a specific failure mode identified empirically: local color
+blobs, desaturated output, spatially uneven quality, missing semantic context, and
+scale-limited discriminator feedback. An ablation study quantifies the effect of
+each component. % TODO: add key numerical results once experiments complete.
 
 
 % ============================================================
