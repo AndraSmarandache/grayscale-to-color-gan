@@ -381,7 +381,7 @@ any function, in principle.
 Why ReLU specifically and not something fancier? It is fast to compute, its
 gradient is simply 1 (positive) or 0 (negative), and it does not saturate for
 large positive values the way Sigmoid does. Sigmoid outputs 0.9999 for both
-x=5 and x=50 -- the gradient is nearly zero and the network stops learning.
+x=5 and x=50 - the gradient is nearly zero and the network stops learning.
 ReLU for x=50 outputs 50. Gradient = 1. Learning continues.
 
 The tradeoff: neurons with negative input permanently output 0 and receive no
@@ -411,7 +411,7 @@ smaller or larger vector.
 
 ![1x1 convolution](images/conv1x1.png)
 
-*Left: at one pixel location, the 1x1 filter is just a list of weights -- one
+*Left: at one pixel location, the 1x1 filter is just a list of weights - one
 per input channel. It computes a weighted sum across all channels at that
 location and produces one output value. Run 64 different 1x1 filters and you
 get 64 output channels. Right: across the full spatial map, the spatial size
@@ -447,7 +447,7 @@ A 1x1 conv adjusts the depth without disturbing the spatial structure.
 
 **3. Final output.** Our colorization generator ends with a 1x1 conv from
 64 channels down to 2 (the `a` and `b` color channels), followed by Tanh.
-No spatial mixing at all -- just "take all the features computed so far and
+No spatial mixing at all - just "take all the features computed so far and
 collapse them into two color values per pixel."
 
 ## Summary
