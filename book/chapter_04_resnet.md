@@ -221,4 +221,4 @@ We use pretrained weights because features that detect edges, textures, and obje
 | **Pretrained weights** | Weights learned on a large dataset (ImageNet) and reused. For colorization, they give us object recognition essentially for free. |
 | **LAB color space** | Separates luminance (L) from color (a, b). Grayscale input = L channel; we only predict a and b. |
 
-*Continue to [Chapter 5: The Discriminator and Adversarial Training](chapter_05_gan.md)*
+*Continue to [Chapter 5: U-Net - The Network with Memory](chapter_05_unet.md)*
