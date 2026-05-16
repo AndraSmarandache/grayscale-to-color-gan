@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Colorization Explorer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="aurora">
+    <div class="aurora-blob"></div>
+    <div class="aurora-blob"></div>
+    <div class="aurora-blob"></div>
+  </div>
+
+  <header>
+    <div class="header-inner">
+      <h1>Colorization Explorer</h1>
+      <p class="subtitle">An interactive look inside a GAN-based grayscale image colorization model</p>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- model selector bar -->
+    <div class="model-bar">
+      <span class="model-bar-label">Model</span>
+      <select id="model-select" class="model-select"></select>
+      <span id="model-badge" class="model-badge hidden">uncertainty</span>
+      <span id="model-status" class="model-status"></span>
+    </div>
+
+    <!-- upload panel -->
+    <section class="upload-section">
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-inner">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <p>Drop an image here or <label for="file-input" class="file-label">browse</label></p>
+          <p class="hint">Works best with natural photos — landscapes, portraits, architecture</p>
+        </div>
+        <input type="file" id="file-input" accept="image/*" hidden />
+      </div>
+
+      <div id="preview-area" class="preview-area hidden">
+        <img id="preview-img" src="" alt="uploaded" />
+        <div class="preview-actions">
+          <button id="colorize-btn" class="btn-primary">Colorize</button>
+          <button id="compare-btn" class="btn-secondary">Compare all models</button>
+          <button id="reset-btn" class="btn-secondary">Upload another</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- spinner shown during inference -->
+    <div id="spinner" class="spinner hidden">
+      <div class="spinner-ring"></div>
+      <p>Running inference — this may take a few seconds on CPU…</p>
+    </div>
+
+    <!-- results — everything below is hidden until we get a response -->
+    <div id="results" class="hidden">
+
+      <!-- step 1: LAB decomposition -->
+      <section class="result-section">
+        <h2>Step 1 — LAB color space</h2>
+        <p class="section-desc">
+          The model works in LAB color space. L (luminance) is the grayscale input.
+          The model predicts only the a and b color channels, which are then combined with L to reconstruct the full color image.
+        </p>
+        <div class="lab-grid">
+          <div class="lab-card">
+            <img id="img-L" />
+            <span class="label">L channel (input)</span>
+            <span class="sublabel">Luminance — exactly what a grayscale image contains</span>
+          </div>
+          <div class="lab-card">
+            <img id="img-a" />
+            <span class="label">Predicted a channel</span>
+            <span class="sublabel">Green ↔ Red axis</span>
+          </div>
+          <div class="lab-card">
+            <img id="img-b" />
+            <span class="label">Predicted b channel</span>
+            <span class="sublabel">Blue ↔ Yellow axis</span>
+          </div>
+          <div class="lab-card highlight">
+            <img id="img-colorized" />
+            <span class="label">Final colorization</span>
+            <span class="sublabel">L + predicted ab → RGB</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- step 2: interactive U-Net diagram -->
+      <section class="result-section" id="unet-section">
+        <h2>Step 2 — Inside the network</h2>
+        <p class="section-desc">
+          Click any block to explore its feature maps — what that layer "sees".
+          Click the arrows between blocks to understand each operation.
+        </p>
+
+        <div id="unet-diagram" class="unet-diagram">
+          <!-- SVG drawn by JS for arrows and skip connections -->
+          <svg id="unet-svg" class="unet-svg"></svg>
+
+          <!-- top row: input / output thumbnails -->
+          <div class="unet-top-row">
+            <div class="ublock ublock-io" id="ub-input">
+              <img id="unet-thumb-input" class="ublock-thumb" />
+              <span class="ublock-label">Input</span>
+              <span class="ublock-sub">L · 256×256</span>
+            </div>
+            <div class="ublock ublock-io" id="ub-output">
+              <img id="unet-thumb-output" class="ublock-thumb" />
+              <span class="ublock-label">Output ab</span>
+              <span class="ublock-sub">2 ch · 256×256</span>
+            </div>
+          </div>
+
+          <!-- encoder | spacer | decoder -->
+          <div class="unet-main">
+            <div class="unet-enc-col">
+              <div class="ublock ublock-enc" id="ub-enc1" data-key="enc1">
+                <span class="ublock-label">Encoder 1</span>
+                <span class="ublock-sub">64 ch · 128×128</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-enc" id="ub-enc2" data-key="enc2">
+                <span class="ublock-label">Encoder 2</span>
+                <span class="ublock-sub">128 ch · 64×64</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-enc" id="ub-enc3" data-key="enc3">
+                <span class="ublock-label">Encoder 3</span>
+                <span class="ublock-sub">256 ch · 32×32</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-enc" id="ub-enc4" data-key="enc4">
+                <span class="ublock-label">Encoder 4</span>
+                <span class="ublock-sub">512 ch · 16×16</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+            </div>
+
+            <!-- center spacer — arrows are drawn here by JS via absolute SVG -->
+            <div class="unet-center-col" id="unet-center-col"></div>
+
+            <div class="unet-dec-col">
+              <div class="ublock ublock-dec" id="ub-dec1" data-key="dec1">
+                <span class="ublock-label">Decoder 1</span>
+                <span class="ublock-sub">64 ch · 128×128</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-dec" id="ub-dec2" data-key="dec2">
+                <span class="ublock-label">Decoder 2</span>
+                <span class="ublock-sub">128 ch · 64×64</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-dec" id="ub-dec3" data-key="dec3">
+                <span class="ublock-label">Decoder 3</span>
+                <span class="ublock-sub">256 ch · 32×32</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+              <div class="ublock ublock-dec" id="ub-dec4" data-key="dec4">
+                <span class="ublock-label">Decoder 4</span>
+                <span class="ublock-sub">512 ch · 16×16</span>
+                <span class="ublock-cta">tap · feature maps</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- bottleneck at bottom center -->
+          <div class="unet-bot-row">
+            <div class="ublock ublock-bottleneck" id="ub-bottleneck" data-key="bottleneck">
+              <span class="ublock-label">Bottleneck</span>
+              <span class="ublock-sub">512 ch · 8×8</span>
+              <span class="ublock-cta">tap · feature maps</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- operation tooltip panel -->
+        <div id="info-panel" class="info-panel hidden">
+          <div class="info-panel-inner">
+            <button id="info-close" class="info-close">×</button>
+            <div id="info-title" class="info-title"></div>
+            <div id="info-visual" class="info-visual"></div>
+            <div id="info-desc"  class="info-desc"></div>
+          </div>
+        </div>
+
+        <!-- feature map slide-in panel -->
+        <div id="fmap-panel" class="fmap-panel hidden">
+          <div class="fmap-panel-header">
+            <button id="fmap-back" class="fmap-back">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+              Back
+            </button>
+            <div class="fmap-panel-titles">
+              <div id="fmap-title" class="fmap-panel-title"></div>
+              <div id="fmap-desc"  class="fmap-panel-desc"></div>
+            </div>
+            <div id="fmap-stats" class="fmap-stats"></div>
+          </div>
+          <div id="fmap-panel-grid" class="fmap-panel-grid"></div>
+        </div>
+      </section>
+
+      <!-- step 3: uncertainty (shown only if model has uncertainty head) -->
+      <section class="result-section hidden" id="uncertainty-section">
+        <h2>Step 3 — Where is the model uncertain?</h2>
+        <p class="section-desc">
+          The model predicts not just a color but also its confidence in that prediction.
+          <span style="color:#ef4444">Red</span> = high uncertainty (walls, metal, shadows — ambiguous colors).
+          <span style="color:#3b82f6">Blue</span> = high confidence (sky, grass, skin — colors the model has seen many times).
+        </p>
+        <div class="uncertainty-grid">
+          <div class="lab-card">
+            <img id="img-uncertainty-heat" />
+            <span class="label">Uncertainty heatmap</span>
+          </div>
+          <div class="lab-card">
+            <img id="img-uncertainty-overlay" />
+            <span class="label">Overlay on input</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- comparison -->
+      <section class="result-section">
+        <h2>Result</h2>
+        <div class="compare-grid">
+          <div class="lab-card">
+            <img id="img-original" />
+            <span class="label">Original (color reference)</span>
+          </div>
+          <div class="lab-card highlight">
+            <img id="img-result" />
+            <span class="label">Model colorization</span>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- compare all models panel (outside #results, always available after image upload) -->
+    <div id="compare-section" class="compare-section hidden">
+      <div class="compare-section-header">
+        <h2>Model comparison</h2>
+        <p class="section-desc">Same image colorized by every available model.</p>
+        <div id="compare-spinner" class="spinner hidden">
+          <div class="spinner-ring"></div>
+          <p>Running all models — this may take a while on CPU…</p>
+        </div>
+      </div>
+      <div id="compare-grid-all" class="compare-grid-all"></div>
+    </div>
+  </main>
+
+  <footer>
+    <p>Bachelor thesis — Faculty of Automation, Computers and Electronics, University of Craiova</p>
+    <p>GAN-based grayscale image colorization with Spatial Color Affinity and No Grey losses</p>
+  </footer>
+
+  <!-- lightbox with prev/next -->
+  <div id="lightbox" class="lightbox hidden">
+    <button id="lb-prev" class="lb-nav">&#8592;</button>
+    <img id="lightbox-img" />
+    <button id="lb-next" class="lb-nav">&#8594;</button>
+    <span id="lb-counter" class="lb-counter"></span>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
