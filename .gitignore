@@ -1,0 +1,19 @@
+# model weights — trained locally, not version-controlled
+models/
+*.pth
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
