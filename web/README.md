@@ -48,6 +48,24 @@ The app auto-detects the checkpoint format so you don't need to change any code.
 
 4. Open `http://localhost:8000`
 
+## Streamlit interface
+
+A Streamlit demo is also available in `web/streamlit_app.py`. It reuses the same generator logic and provides a quick interactive interface for your thesis presentation.
+
+Run locally from the project root:
+```bash
+pip install -r web/requirements.txt
+streamlit run web/streamlit_app.py
+```
+
+If you want to load a custom checkpoint from a different path:
+```bash
+set CHECKPOINT_PATH=C:\path\to\checkpoint.pth
+streamlit run web/streamlit_app.py
+```
+
+The app will automatically detect uncertainty checkpoints from the filename.
+
 ## Deploying to HuggingFace Spaces (free hosting)
 
 1. Create a new Space on huggingface.co — choose type **Docker**

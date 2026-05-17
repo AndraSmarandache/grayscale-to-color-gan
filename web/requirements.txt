@@ -7,3 +7,4 @@ fastai
 scikit-image
 Pillow
 numpy
+streamlit
