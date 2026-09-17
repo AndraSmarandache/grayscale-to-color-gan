@@ -176,4 +176,35 @@ There is always one annotator who marks every image as obviously fake. There is 
 
 ---
 
+## 9.7 Making the Model Say So: A Learned Uncertainty Head
+
+Everything above is about uncertainty as a *phenomenon* - something that shapes what the generator learns to predict, indirectly, through the loss. This project also has a direct version: a small head that predicts, per pixel, *how* uncertain the model currently is, as a number you can read out and visualize.
+
+`UncertaintyGenerator` (`src/models/generator.py`) wraps a trained colorization generator and adds a 1x1 convolution on top of its color prediction:
+
+```python
+class UncertaintyGenerator(nn.Module):
+    def __init__(self, base_generator):
+        super().__init__()
+        self.base = base_generator
+        self.logvar_head = nn.Conv2d(2, 2, kernel_size=1)
+        nn.init.zeros_(self.logvar_head.weight)
+        nn.init.constant_(self.logvar_head.bias, -2.0)   # start confident
+
+    def forward(self, L):
+        ab_mean = self.base(L)
+        log_var = self.logvar_head(ab_mean)
+        return ab_mean, log_var
+```
+
+It is trained with `GaussianNLLLoss` (`src/losses/uncertainty.py`) instead of plain L1:
+
+```python
+loss = 0.5 * (log_var + (ab_target - ab_mean) ** 2 * torch.exp(-log_var))
+```
+
+The `exp(-log_var)` term is the mechanism worth noticing: a large prediction error costs less when `log_var` is high, and the `log_var` term itself is a penalty for claiming high uncertainty everywhere. The two pull against each other - the model can only "afford" to be uncertain where the error would otherwise be large, which is exactly the ambiguous-region behavior this chapter has been describing conceptually. Converting `log_var` back to a per-pixel standard deviation (`exp(0.5 * log_var)`) gives a heatmap: bright where the model is guessing, dark where it is confident. This is what the "Uncertainty" tab in the web demo (`web/`) visualizes.
+
+---
+
 [Next chapter: Training - The GPU Marathon](chapter_10_training.md)

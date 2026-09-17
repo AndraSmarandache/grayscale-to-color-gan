@@ -22,6 +22,18 @@ All concepts connect directly to the real implementation in this repository: a
 GAN-based image colorization system using a ResNet-18 U-Net generator, trained
 on 13,000 COCO images.
 
+**Scope note.** This book walks through the baseline pipeline implemented in
+`src/`: ResNet-18 U-Net generator, PatchGAN discriminator, L1 + adversarial +
+TV loss. That is the foundation, and every concept here (LAB color space,
+skip connections, the GAN game, loss balancing, training dynamics) applies
+directly to the final system too. The best-performing model reported in the
+thesis builds on top of this baseline with three additions not covered here:
+a colorfulness-based training curriculum, a semantic color consistency loss
+(SCCL, built on frozen DINOv2 features), and a second DINOv2 cross-attention
+refinement stage, trained on a larger 15,000-image split. That pipeline lives
+in `notebooks/04_main_models/` rather than in `src/` - see the top-level
+[README](../README.md) and `paper/thesis.pdf` for its architecture and results.
+
 ---
 
 ## Chapters

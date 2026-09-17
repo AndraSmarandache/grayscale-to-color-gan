@@ -290,6 +290,8 @@ In practice for colorization, the L1 term in the generator loss is a stabilizer.
 
 ## 7.9 Our Setup
 
+*These are the baseline `src/` values this book documents. The final model reported in the thesis (SCCL + colorfulness curriculum + DINOv2 refinement) fine-tunes this recipe further - notably lambda_L1=15 and lr=1e-4 - on top of the same GAN/PatchGAN foundation described here. See the top-level README for the final numbers.*
+
 For this project, the GAN configuration is:
 
 ```

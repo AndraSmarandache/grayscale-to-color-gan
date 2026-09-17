@@ -6,6 +6,8 @@ Loss functions are the most honest part of deep learning. Everything else - arch
 
 Our colorization model uses several loss functions at once. Each one teaches the generator something different.
 
+*As in Chapters 5 and 7, this chapter documents the loss terms implemented in `src/losses/` - L1, adversarial, TV, and the optional No-Grey/Contrast/Spatial-Affinity terms. The final thesis model adds a fifth term, SCCL (semantic color consistency via frozen DINOv2), and reweights L1 down to lambda_L1=15; SCCL is implemented inline in the training notebooks, not in `src/losses/`, so it is not covered below. See the top-level README for how it fits in.*
+
 ---
 
 ## 8.1 The Baseline: L1 Pixel Loss
