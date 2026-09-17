@@ -146,20 +146,23 @@ RGB  ->  XYZ  ->  LAB
 
 XYZ is another CIE color space that we do not need to understand in detail - it is just a linear transformation of RGB. The conversion from XYZ to LAB is non-linear (it involves cube roots), which is why it is a two-step process.
 
-In our code, we use the `kornia` library:
+In our code, the conversion happens on the CPU, per image, using `scikit-image`:
 
 ```python
-import kornia.color as KC
+# from src/data/dataset.py
+from skimage.color import rgb2lab
 
-# image_rgb: [B, 3, H, W], float32, values in [0, 1]
-image_lab = KC.rgb_to_lab(image_rgb)
-# image_lab: [B, 3, H, W], L in [0,100], a and b in roughly [-128, 127]
+img = Image.open(path).convert("RGB")
+img = np.array(img)                       # [H, W, 3], uint8
 
-L  = image_lab[:, 0:1, :, :]   # [B, 1, H, W]
-ab = image_lab[:, 1:3, :, :]   # [B, 2, H, W]
+img_lab = rgb2lab(img).astype("float32")  # [H, W, 3], L in [0,100], a/b roughly [-128, 127]
+img_lab = transforms.ToTensor()(img_lab)  # -> [3, H, W]
+
+L  = img_lab[[0], ...]   # [1, H, W]
+ab = img_lab[[1, 2], ...]  # [2, H, W]
 ```
 
-For the grayscale input to the generator, we use L directly. For the training target, we use ab.
+For the grayscale input to the generator, we use L directly. For the training target, we use ab. This happens inside `ColorizationDataset.__getitem__`, once per image, before batching - not as a batched GPU op.
 
 ---
 

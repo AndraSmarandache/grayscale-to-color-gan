@@ -8,6 +8,8 @@ All the architecture decisions, all the loss functions, all the careful color sp
 
 ## 10.1 The Dataset
 
+*This chapter documents the baseline GAN pipeline in `src/` - L1 + adversarial + TV loss, the setup this book builds up to. The best-performing model reported in the thesis adds a colorfulness curriculum, a semantic consistency loss (SCCL, built on frozen DINOv2 features), and a second DINOv2 cross-attention refinement stage on top of this baseline, trained on a larger 15,000-image split. That pipeline lives in the training notebooks (`notebooks/04_main_models/`) rather than in `src/`; see the top-level README and the thesis for its exact numbers. The concepts here - the dataset, the optimizer, the training loop, the failure modes - still apply to it directly.*
+
 The model is trained on 13,000 images from the COCO dataset (Common Objects in Context). COCO was originally designed for object detection and segmentation, which is why it contains a wide variety of scene types: outdoor scenes, indoor scenes, people, animals, vehicles, food. This variety is useful for colorization - a model trained only on landscapes would be terrible at colorizing portraits.
 
 Images are resized to 256 x 256 before being fed to the model. This is a hard requirement: the U-Net architecture has fixed-size skip connections, and feeding images of a different size would cause dimension mismatches.
@@ -30,7 +32,7 @@ class ColorizationDataset(Dataset):
 
 Each image is loaded as RGB, converted to LAB, and split into L and ab channels. The normalization divides by 50 (for L) or 110 (for ab), centering both in roughly [-1, 1]. The model therefore never sees raw pixel values -- only normalized floats.
 
-During training, one augmentation is applied: random horizontal flip. This doubles the ef\ective dataset size at zero cost, since a horizontally flipped photograph of a park is still a valid photograph of a park. Vertical flip is not used -- an upside-down sky would train the model on nonsense.
+During training, one augmentation is applied: random horizontal flip. This doubles the effective dataset size at zero cost, since a horizontally flipped photograph of a park is still a valid photograph of a park. Vertical flip is not used -- an upside-down sky would train the model on nonsense.
 
 ```
 Dataset split:
@@ -56,7 +58,7 @@ def init_weights(net, init='norm', gain=0.02):
             nn.init.constant_(m.bias.data, 0.0)
         elif 'BatchNorm2d' in classname:
             nn.init.normal_(m.weight.data, 1., gain)
-   \        nn.init.constant_(m.bias.data, 0.)
+            nn.init.constant_(m.bias.data, 0.)
     net.apply(init_func)
 ```
 
@@ -236,7 +238,7 @@ GANs have a larger surface area for failure than standard supervised models. The
 
 **Generator dominance**: G finds a way to fool D without producing realistic images -- for example by saturating the discriminator's output. Loss_G_GAN -> 0 but images look wrong. Fix: increase D learning rate, retrain D more steps per G step.
 
-**Checkerboard artifacts**: high-frequency grid-like patterns in the output. Usually caused by transposed convolutions (not present in this project, which uses resize-then-conv). If they appear, check the upsampling blocks.
+**Checkerboard artifacts**: high-frequency grid-like patterns in the output. Usually caused by transposed convolutions, or by plain PixelShuffle upsampling started from a random init. This project's decoder uses PixelShuffle with ICNR initialization (Chapter 5, section 5.3) specifically to avoid this failure mode from the first training step onward. If checkerboarding appears anyway, check that ICNR init is actually being applied to the upsampling blocks.
 
 **Training instability** (loss spikes): usually caused by learning rates that are too high, or by a batch containing a very unusual image. Gradient clipping can help; reducing lr_G and lr_D is usually sufficient.
 
@@ -271,7 +273,7 @@ Thirteen chapters ago (from the model's perspective, although the book is only t
 
 - reads a single-channel grayscale image
 - runs it through an encoder that extracts semantic information at multiple scales (Chapter 5)
-- compresses everything into a 16 x 16 x 512 bottleneck
+- compresses everything into an 8 x 8 x 512 bottleneck
 - decodes back to full resolution using skip connections that reintroduce spatial detail
 - outputs two channels in LAB color space (Chapter 6)
 - was trained against a discriminator that judged 900 local patches per image (Chapter 7)

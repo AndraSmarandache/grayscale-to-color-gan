@@ -27,7 +27,7 @@ The encoder-decoder architecture resolves this by doing both in sequence. First 
 
 ## 5.2 The Encoder: Understanding by Forgetting
 
-The encoder is ResNet-18 (Chapter 4), adapted for 1-channel grayscale input, with one modification from standard ResNet-18: the max-pool layer after the stem is removed. In the original classification network, that max-pool halves the resolution one extra time. For U-Net, every spatial resolution is precious for the skip connections, so it goes.
+The encoder is ResNet-18 (Chapter 4), adapted for 1-channel grayscale input. Unlike some U-Net variants, this implementation keeps the standard ResNet-18 stem intact, max-pool included: `fastai.create_body(resnet18, cut=-2)` simply removes the final average-pool and classification head, leaving everything else - conv1, batch-norm, relu, max-pool, and all four residual stages - untouched. That max-pool costs one extra halving of resolution that a hand-built U-Net might have skipped, but it also means the encoder is exactly the ResNet-18 everyone already knows, which keeps the pretrained ImageNet weights meaningful layer-for-layer.
 
 ### Stage 1: The 7x7 stem
 
@@ -50,30 +50,37 @@ Three things at once:
 
 ### The full encoder path
 
+Verified directly against the running model (`create_body(resnet18, cut=-2)` followed by a forward pass with hooks on every stage) - not just read off the architecture diagram:
+
 ```
 Input:    1  x 256 x 256   (grayscale L channel)
    |
-   v  7x7 conv, stride=2, 64 ch
-Stage 1:  64 x 128 x 128              <- skip A
+   v  7x7 conv, stride=2, 64 ch  (+ BatchNorm + ReLU)
+Stem:     64 x 128 x 128              <- skip A
+   |
+   v  3x3 max-pool, stride=2
+        64 x  64 x  64
    |
    v  2 residual blocks, stride=1, 64 ch
-Stage 2:  64 x 128 x 128              <- skip B
+Layer 1:  64 x  64 x  64              <- skip B
    |
    v  2 residual blocks, stride=2, 128 ch
-Stage 3:  128 x  64 x  64             <- skip C
+Layer 2:  128 x  32 x  32             <- skip C
    |
    v  2 residual blocks, stride=2, 256 ch
-Stage 4:  256 x  32 x  32             <- skip D
+Layer 3:  256 x  16 x  16             <- skip D
    |
    v  2 residual blocks, stride=2, 512 ch
-Bottleneck: 512 x 16 x 16
+Layer 4 / Bottleneck: 512 x 8 x 8
 ```
 
-### What 512 x 16 x 16 actually means
+That is one more halving than a maxpool-free encoder would give: the max-pool between the stem and Layer 1 is standard, unmodified ResNet-18, and it is what pulls the bottleneck down to 8x8 rather than 16x16.
 
-The bottleneck has 256 spatial cells (16 rows x 16 columns). Each cell corresponds to one 16x16 patch of the original image - the animation shows this. But there are 512 of these grids stacked on top of each other, one per channel.
+### What 512 x 8 x 8 actually means
 
-Each channel is one filter that learned to detect something specific during training. One fires for sky. Another for grass. Another for animal fur texture. Another for hard edges between regions. At any spatial cell, 512 numbers are stacked up, each answering a different question about that 16x16 patch:
+The bottleneck has 64 spatial cells (8 rows x 8 columns). Each cell corresponds to one 32x32 patch of the original image (256 / 8 = 32) - the animation shows this. But there are 512 of these grids stacked on top of each other, one per channel.
+
+Each channel is one filter that learned to detect something specific during training. One fires for sky. Another for grass. Another for animal fur texture. Another for hard edges between regions. At any spatial cell, 512 numbers are stacked up, each answering a different question about that 32x32 patch:
 
 ```
 Cell (row=3, col=7) - covers top-right area of the image:
@@ -85,11 +92,11 @@ Cell (row=3, col=7) - covers top-right area of the image:
   channel 511: 0.58   (possible cloud boundary)
 ```
 
-512 channels = 512 different semantic questions answered for that patch. The total value count went up compared to the input (512 x 16 x 16 = 131,072 vs 65,536 input pixels), but that misses the point. The compression is in *meaning*. Each of the 256 spatial cells carries a 512-dimensional description of what is happening in its 16x16 patch. Not "this pixel is brightness 173" but "this patch is open sky, near the horizon, some gradient from top to bottom." That is what the decoder uses to decide colors.
+512 channels = 512 different semantic questions answered for that patch. The total value count went up compared to the input (512 x 8 x 8 = 32,768 vs 65,536 input pixels - roughly half, not the 2x the 16x16 version would have suggested), but that misses the point. The compression is in *meaning*. Each of the 64 spatial cells carries a 512-dimensional description of what is happening in its 32x32 patch. Not "this pixel is brightness 173" but "this patch is open sky, near the horizon, some gradient from top to bottom." That is what the decoder uses to decide colors.
 
-![Animation: each cell in the 16x16 bottleneck highlighted in orange, with the corresponding 16x16 patch in the original image highlighted simultaneously](images/bottleneck_receptive_field.gif)
+![Animation: each cell in the 8x8 bottleneck highlighted in orange, with the corresponding 32x32 patch in the original image highlighted simultaneously](images/bottleneck_receptive_field.gif)
 
-*Left: the original image with the active patch in orange. Center: how stride=2 at each stage brings 256x256 down to 16x16. Right: the 16x16 bottleneck - the active cell highlighted. Moving one cell in the bottleneck jumps 16 pixels in the original image.*
+*Left: the original image with the active patch in orange. Center: how stride=2 at each stage (stem, max-pool, and three residual layers) brings 256x256 down to 8x8. Right: the 8x8 bottleneck - the active cell highlighted. Moving one cell in the bottleneck jumps 32 pixels in the original image.*
 
 As spatial dimensions shrink, exact positions are lost. The network knows there is a cat somewhere in the upper-left quadrant. It does not know whether the ear tip was at column 87 or column 91. That precision disappears in the downsampling. This is the cost of understanding - you cannot hold a magnifying glass to every pixel while also appreciating the whole scene. The decoder has to recover it somehow, and the skip connections are how.
 
@@ -138,7 +145,7 @@ With stride=2 and a 3x3 kernel, each input value places its 3x3 fan-out patch tw
 
 *Top: number of input values contributing to each output cell. Middle: with non-symmetric kernel weights, high-contribution cells become systematically brighter. Bottom: the resulting grid pattern visible in the output.*
 
-### Method 3: Resize then Convolve (what we use)
+### Method 3: Resize then Convolve
 
 Bilinear upsample first (no parameters, no artifacts), then a regular conv to learn the refinement:
 
@@ -151,7 +158,27 @@ nn.Sequential(
 )
 ```
 
-"Make it bigger" is fixed. "Make it good" is learned. No artifacts.
+"Make it bigger" is fixed. "Make it good" is learned. No artifacts. This is a common, simple choice, but it is not what the decoder in this project actually uses.
+
+### Method 4: PixelShuffle with ICNR init (what we actually use)
+
+The generator is built with fastai's `DynamicUnet`, and its decoder blocks use **`PixelShuffle_ICNR`**, not a hand-written resize-then-conv block. The idea is a bit different from all three methods above:
+
+1. A 1x1 convolution expands the channel count by `scale^2` (for a 2x upsample, that is 4x the channels) *without* changing spatial size.
+2. `nn.PixelShuffle(scale)` rearranges those extra channels into extra spatial positions: a `[B, C*4, H, W]` tensor becomes `[B, C, 2H, 2W]`. No interpolation, no fan-out overlap - every output pixel comes from exactly one of the input's (rearranged) values.
+3. The 1x1 conv's weights are **ICNR-initialized** ("initialized to convolution NN resize"): at the start of training, the conv is set up so that the pixel-shuffle result is equivalent to nearest-neighbor upsampling. Training then refines those weights. This specific initialization exists because plain PixelShuffle, trained from a random init, produces the same checkerboard artifacts as transposed convolution - ICNR is the fix.
+
+```python
+# conceptually, fastai's PixelShuffle_ICNR(ni, nf, scale=2)
+nn.Sequential(
+    ConvLayer(ni, nf * scale**2, ks=1),   # 1x1 conv, ICNR-initialized
+    nn.PixelShuffle(scale),               # channels -> spatial resolution
+)
+```
+
+So: no bilinear blur, no transposed-conv fan-out, and (with the default settings used here) no extra blur/anti-aliasing pooling step either. Checkerboard artifacts are avoided by initialization, not by avoiding learned upsampling altogether.
+
+The hand-rolled `ClassicUnet` class also present in this repository (`src/models/generator.py`, used only when `USE_RESNET=False`) *does* use plain transposed convolutions, for comparison - it is not the path used to produce any of the reported results.
 
 ---
 
@@ -222,45 +249,50 @@ The weights w are learned from training. The network sees thousands of examples 
 
 ## 5.5 Architecture: Full Dimension Walk-Through
 
-One thing to establish first: **the encoder never produces a 256x256 feature map.** The very first operation is a stride=2 convolution, halving the input to 128x128 immediately. There is no skip connection at the 256x256 level. The final step back to 256x256 is decoder-only.
+One thing to establish first: **the encoder never produces a 256x256 feature map.** The very first operation is a stride=2 convolution, halving the input to 128x128 immediately. There is no *encoder* skip connection at the 256x256 level - though, as the last row below shows, the decoder does get one more piece of help at that resolution, straight from the raw input.
+
+The table below was captured by hooking every layer of the real model (`DynamicUnet(create_body(resnet18, cut=-2), 2, (256,256))`) and printing the tensor shape after each one - it is not derived from the architecture description, it is what the model actually does:
 
 ```
 INPUT
-  L channel:     [B,   1, 256, 256]
+  L channel:      [B,   1, 256, 256]
 
 ENCODER
-  Stem (7x7 s2): [B,  64, 128, 128]      <- skip A
-  ResGroup 1:    [B,  64, 128, 128]      <- skip B
-  ResGroup 2:    [B, 128,  64,  64]      <- skip C
-  ResGroup 3:    [B, 256,  32,  32]      <- skip D
-  ResGroup 4:    [B, 512,  16,  16]      <- BOTTLENECK
+  Stem (7x7 s2):  [B,  64, 128, 128]      <- skip A
+  MaxPool (s2):   [B,  64,  64,  64]
+  Layer 1:        [B,  64,  64,  64]      <- skip B
+  Layer 2:        [B, 128,  32,  32]      <- skip C
+  Layer 3:        [B, 256,  16,  16]      <- skip D
+  Layer 4:        [B, 512,   8,   8]      <- BOTTLENECK
 
-DECODER
-  Up block 4:    upsample -> [B, 256, 32, 32]
-                 cat skip D -> [B, 512, 32, 32]   (256 + 256)
-                 conv block -> [B, 256, 32, 32]
+MIDDLE (bridge convs, resolution unchanged)
+                  [B, 512,   8,   8]
 
-  Up block 3:    upsample -> [B, 128, 64, 64]
-                 cat skip C -> [B, 256, 64, 64]   (128 + 128)
-                 conv block -> [B, 128, 64, 64]
+DECODER (each block: PixelShuffle_ICNR upsample, then concat skip, then conv)
+  Up block 4:     upsample -> [B, 256,  16,  16]
+                  cat skip D -> conv -> [B, 512,  16,  16]
 
-  Up block 2:    upsample -> [B,  64, 128, 128]
-                 cat skip B -> [B, 128, 128, 128]  (64 + 64)
-                 conv block -> [B,  64, 128, 128]
+  Up block 3:     upsample -> [B, 256,  32,  32]
+                  cat skip C -> conv -> [B, 384,  32,  32]
 
-  Up block 1:    upsample -> [B,  32, 256, 256]
-                 (no skip - encoder never reached 256x256)
-                 conv block -> [B,  32, 256, 256]
+  Up block 2:     upsample -> [B, 192,  64,  64]
+                  cat skip B -> conv -> [B, 256,  64,  64]
 
-  Output:        1x1 conv + Tanh -> [B, 2, 256, 256]
+  Up block 1:     upsample -> [B, 128, 128, 128]
+                  cat skip A -> conv -> [B,  96, 128, 128]
+
+  Final upsample: PixelShuffle_ICNR -> [B,  96, 256, 256]
+                  (no encoder skip at this resolution - it never existed)
+                  cat raw input L    -> [B,  97, 256, 256]
+                  ResBlock + 1x1 conv -> [B,   2, 256, 256]
 
 OUTPUT
-  ab channels:   [B,   2, 256, 256]
+  ab channels:    [B,   2, 256, 256]
 ```
 
 ![Complete U-Net architecture with tensor shapes at each stage](images/unet_full_arch.png)
 
-*Encoder arm: spatial resolution shrinks, channels grow. Decoder arm: resolution grows, channels shrink. Skip connections at 128x128, 64x64, and 32x32. The final 256x256 output has no skip - the encoder never reaches that resolution.*
+*Encoder arm: spatial resolution shrinks, channels grow, four skip levels (128, 64, 32, 16) plus an 8x8 bottleneck. Decoder arm: PixelShuffle_ICNR upsampling at every step, mirroring the encoder back up. At full resolution there is no encoder skip to draw on, but fastai's `DynamicUnet` concatenates the original 1-channel input directly before the final refinement block - a direct, if narrow, path from input to output.*
 
 With a 256x256 input and stride=2 at every downsampling step, all spatial dimensions divide evenly and the encoder-decoder pairs match exactly. The off-by-one size mismatch problem that plagues U-Net implementations only appears with odd-dimension inputs.
 
@@ -325,12 +357,13 @@ The decoder is initialized randomly. The encoder brings expertise; the decoder l
 | Term | What it means |
 |------|---------------|
 | **Pixel-wise prediction** | One output value per input pixel. Colorization, segmentation, depth estimation are all pixel-wise. The opposite of classification, which outputs one label per image. |
-| **Bottleneck** | The lowest-resolution point. 512 channels at 16x16 = 512 semantic questions answered for each of 256 image patches. |
-| **7x7 stem conv** | First convolution in ResNet-18. Larger kernel for more context on raw pixels. Stride=2 halves spatial size immediately. Max-pool removed for U-Net. |
-| **Bilinear interpolation** | Upsampling by weighted-averaging neighbors. Smooth, no parameters, no artifacts. |
-| **Transposed convolution** | Learned upsampling. Each input value fans out to a patch in the output. More expressive than bilinear, but produces checkerboard artifacts. |
-| **Checkerboard artifact** | Regular grid pattern in transposed conv outputs. Caused by uneven contribution counts across output cells combined with non-symmetric weights. |
-| **Resize-then-conv** | Bilinear upsample (fixed), then regular conv (learned). No artifacts. |
+| **Bottleneck** | The lowest-resolution point. 512 channels at 8x8 = 512 semantic questions answered for each of 64 image patches (32x32 pixels each). |
+| **7x7 stem conv** | First convolution in ResNet-18. Larger kernel for more context on raw pixels. Stride=2 halves spatial size immediately. The standard ResNet-18 max-pool right after it is kept, not removed. |
+| **Bilinear interpolation** | Upsampling by weighted-averaging neighbors. Smooth, no parameters, no artifacts. Not used in this project's decoder. |
+| **Transposed convolution** | Learned upsampling. Each input value fans out to a patch in the output. More expressive than bilinear, but produces checkerboard artifacts. Used by the alternative `ClassicUnet`, not by the ResNet-18 decoder actually used to produce the reported results. |
+| **Checkerboard artifact** | Regular grid pattern in upsampled outputs. Caused by uneven contribution counts (transposed conv) or an unfavorable random init (plain PixelShuffle) combined with non-symmetric weights. |
+| **Resize-then-conv** | Bilinear upsample (fixed), then regular conv (learned). No artifacts. A reasonable alternative design, but not what this project's decoder uses. |
+| **PixelShuffle_ICNR** | The upsampling method this project's decoder actually uses: a 1x1 conv expands channels by scale^2, then `PixelShuffle` rearranges those channels into extra spatial resolution. ICNR initialization starts the conv equivalent to nearest-neighbor resize, which avoids checkerboard artifacts from the first training step onward. |
 | **Encoder skip features** | Feature maps saved at each encoder scale. Carry spatial precision: exact edge and boundary positions. Less semantic than the bottleneck. |
 | **Decoder features** | Features flowing back up from the bottleneck. Carry semantic context from having processed the whole image. Less spatially precise. |
 | **Conv after cat** | Convolution following concatenation. Merges encoder spatial precision with decoder semantic context. |
