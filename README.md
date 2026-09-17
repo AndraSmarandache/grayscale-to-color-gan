@@ -93,8 +93,13 @@ grayscale-to-color-gan/
 - **Network Explorer**: U-Net feature maps
 - **Uncertainty**: predictive uncertainty visualization
 - **Model Comparison**: runs every checkpoint on the same image side by side
-
+  
 ![Web demo screenshot](assets/readme/web_demo.png)
+<img width="1368" height="532" alt="Screenshot 2026-06-12 174110" src="https://github.com/user-attachments/assets/53eb8d0b-347c-4976-90ac-c5449c055a63" />
+<img width="1883" height="903" alt="Screenshot 2026-06-12 173010" src="https://github.com/user-attachments/assets/a53ca10e-e52b-4095-af62-89c276318489" />
+<img width="1883" height="908" alt="Screenshot 2026-06-12 173110" src="https://github.com/user-attachments/assets/a29a70bc-f551-4ca5-be69-28a8a45fb104" />
+<img width="1907" height="906" alt="Screenshot 2026-06-12 172700" src="https://github.com/user-attachments/assets/260bb57e-be81-4c0d-9b4a-d22baa363347" />
+<img width="1895" height="912" alt="Screenshot 2026-06-12 173351" src="https://github.com/user-attachments/assets/d74c8a1e-ab5d-4126-967c-b6cd7f75c3d4" />
 
 Run it locally:
 
